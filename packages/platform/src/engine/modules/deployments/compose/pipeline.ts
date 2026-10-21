@@ -29,10 +29,13 @@ import type {
   SystemManager,
 } from "@repo/adapters";
 import { BuildLogger } from "@repo/adapters";
+import { deploymentResourceFailure } from "../resource-failure";
+import { recordRuntimeImageReceipts } from "../../../lib/runtime-image-receipts";
 
 import type { BuildConfigSnapshotLike } from "../build-config";
 import {
   cleanupBuildArtifact,
+  collectLogs,
   onCancelled,
   onFailure,
   onNoChanges,
@@ -60,6 +63,7 @@ import { assertExactServiceTargets } from "../exact-service-targets";
 import { strictRefreshImages } from "../pinned-artifacts";
 import { cloudCapacityFailure } from "../../../lib/cloud-capacity";
 import { retirePreviousRoleContainers } from "../role-runtime";
+import { assertRequiredServiceEnvironment } from "./required-env-preflight";
 
 export interface ComposePipelineOpts {
   project: Project;
@@ -282,6 +286,13 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
   if (strictScope && targetServiceIds) {
     assertExactServiceTargets(await getCurrentServices(), [...targetServiceIds]);
   }
+  await assertRequiredServiceEnvironment({
+    projectId: project.id,
+    dep,
+    targetServiceIds,
+    logger,
+  });
+  throwIfDeploymentCancelled(opts.signal);
   const keepProvisionedOnCancel = () => deploymentCancellationKeepsProvisioned(opts.signal);
 
   const composeBuild = await buildComposeImages({
@@ -347,7 +358,8 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
       logger,
     });
     await cleanupBuiltArtifacts(runtime, composeBuild.builtImageRefs, logger);
-    await onFailure(ctx, message, composeBuild.durationMs);
+    await onFailure(ctx, message, composeBuild.durationMs,
+      deploymentResourceFailure({ project, message, causes: composeBuild.buildErrorCauses }));
     return;
   }
   if (composeBuild.buildFailures.size > 0) {
@@ -481,7 +493,8 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
 
   if (composeResult.status === "failed") {
     await cleanupBuiltArtifacts(runtime, composeBuild.builtImageRefs, logger, publishedServiceIds);
-    await onFailure(ctx, composeResult.error ?? "Compose deploy failed", composeBuild.durationMs);
+    await onFailure(ctx, composeResult.error ?? "Compose deploy failed", composeBuild.durationMs,
+      deploymentResourceFailure({ project, message: composeResult.error ?? "", causes: composeBuild.buildErrorCauses }));
     return;
   }
 
@@ -548,13 +561,31 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
     logger.log(`Deployment completed with warnings: ${warningMessage}\n`, "warn");
   }
 
+  throwIfDeploymentCancelled(opts.signal);
   await onSuccess(ctx, {
     containerId: composeResult.primaryContainerId ?? COMPOSE_SENTINEL,
     url: composeResult.publicUrl,
     durationMs: composeBuild.durationMs,
     warningMessage,
     decisionPending,
+    failureMeta: project.workspaceId && composeResult.summary.failed > 0 ? deploymentResourceFailure({
+      project,
+      message: composeResult.services.filter(service => service.status === "failed")
+        .map(service => service.error ?? "").join("\n"),
+      logs: ctx.resourceEvidence ?? collectLogs(ctx),
+      causes: composeBuild.buildErrorCauses,
+    }) : undefined,
     metaPatch: {
+      runtimeImages: recordRuntimeImageReceipts(
+        (dep.meta as { runtimeImages?: unknown } | null)?.runtimeImages ??
+          (previous?.meta as { runtimeImages?: unknown } | null)?.runtimeImages,
+        composeResult.services.filter(service => !service.carried && service.status !== "failed" && service.status !== "failure" &&
+          composeBuild.builtImageRefs.has(service.serviceId)).map(service => ({
+          serviceId: service.serviceId,
+          imageRef: composeBuild.builtImageRefs.get(service.serviceId)!,
+          baseImages: composeBuild.baseImages?.get(service.serviceId),
+        })),
+      ),
       composeDeployment: {
         totalServices: composeResult.summary.total,
         successfulServices: composeResult.summary.successful,

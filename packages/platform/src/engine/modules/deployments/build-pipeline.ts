@@ -27,6 +27,8 @@ import {
   withProjectRuntimeTransition,
 } from "../../lib/project-runtime-lock";
 import { resolveDeploymentEnvironment } from "./deployment-environment";
+import { deploymentResourceFailure } from "./resource-failure";
+import { recordRuntimeImageReceipts, runtimeImageTrackingRef } from "../../lib/runtime-image-receipts";
 import {
   BUILD_ENV_VARS,
   AppError,
@@ -788,8 +790,10 @@ async function executeBuildAndDeploy(
 
   const logs: LogEntry[] = [...initialLogs];
   const MAX_LOG_ENTRIES = 50_000;
+  const resourceEvidence: LogEntry[] = [];
 
   const logCallback = (entry: LogEntry) => {
+    if (entry.resourceIssue) resourceEvidence.push(entry);
     if (logs.length < MAX_LOG_ENTRIES) logs.push(entry);
     sessionManager.appendLog(dep.id, entry);
   };
@@ -816,6 +820,7 @@ async function executeBuildAndDeploy(
     persistLogs,
     logger,
     provisioned,
+    resourceEvidence,
   };
 
   let buildResourcesForRecovery: ResourceConfig | null | undefined;
@@ -1472,7 +1477,8 @@ async function executeBuildAndDeploy(
     if (buildResult.status === "failed") {
       const capacityError = cloudCapacityFailure(buildResult.errorCause, project.id, buildResourcesForRecovery, project.workspaceId);
       if (capacityError) throw capacityError;
-      await onFailure(ctx, buildResult.errorMessage ?? "Build failed", buildResult.durationMs);
+      await onFailure(ctx, buildResult.errorMessage ?? "Build failed", buildResult.durationMs,
+        deploymentResourceFailure({ project, message: buildResult.errorMessage ?? "", cause: buildResult.errorCause }));
       return;
     }
 
@@ -1547,6 +1553,11 @@ async function executeBuildAndDeploy(
       return;
     }
     const activate = async () => {
+      if (runtime instanceof DockerRuntime && servedRouting.deployMode !== "static-file-serve") {
+        const previous = await findActiveDeployment(project);
+        deployConfig.previousContainerId = previous?.containerId ?? undefined;
+        await runtime.prepareDeploymentVolumes(deployConfig);
+      }
       await executeReleasePhase(phase, deployConfig);
       throwIfDeploymentCancelled(cancellationSignal);
       return hostPortTargetLockHeld
@@ -1624,7 +1635,8 @@ async function executeBuildAndDeploy(
     // invert a working deploy and tear its containers down.
     const capacityError = cloudCapacityFailure(err, project.id, buildResourcesForRecovery, project.workspaceId);
     await reportPipelineError(ctx, capacityError?.message ?? message, logger, capacityError
-      ? { errorCode: capacityError.code, errorDetails: capacityError.details } : undefined);
+      ? { errorCode: capacityError.code, errorDetails: capacityError.details }
+      : deploymentResourceFailure({ project, message, cause: err }));
   } finally {
     await finishBuildCancellation?.();
     // The deploy is over either way — release the loopback bridges it opened.
@@ -2923,10 +2935,18 @@ async function executeServerDeploy(phase: DeployPhaseInputs, deployConfig: Deplo
   // `metaPatch` is spread into deployment.meta (persisted) and read back for the
   // SSE payload in onSuccess, so both live + refresh see the same result.
   const metaPatch: Record<string, unknown> = {};
+  const priorImageReceipts = (dep.meta as { runtimeImages?: unknown } | null)?.runtimeImages ??
+    (prevDep?.meta as { runtimeImages?: unknown } | null)?.runtimeImages;
+  metaPatch.runtimeImages = recordRuntimeImageReceipts(priorImageReceipts,
+    buildResult.baseImages !== undefined && buildResult.imageRef
+      ? [{ imageRef: buildResult.imageRef, baseImages: buildResult.baseImages }] : []);
   // Image preparation resolves a registry tag to its immutable repo digest.
   // Freeze that exact reference into the successful deployment so a rollback
   // can re-pull the same bytes even after local image retention expires.
   if (snapshot.releaseImageRef && (runtime.name === "docker" || runtime.name === "kubernetes") && buildResult.imageRef) {
+    metaPatch.runtimeImageSource = runtimeImageTrackingRef(snapshot.releaseImageRef,
+      (dep.meta as { runtimeImageSource?: unknown } | null)?.runtimeImageSource,
+      dep.trigger === "rollback" || !!snapshot.refreshAppDeploymentId || !!snapshot.handoverAppImage);
     metaPatch.releaseImageRef = buildResult.imageRef;
   }
   if (portCheck.length > 0) metaPatch.portCheck = portCheck;
@@ -3020,6 +3040,7 @@ async function executeServerDeploy(phase: DeployPhaseInputs, deployConfig: Deplo
     logger.log(`Deployment completed with warnings: ${warningMessage}\n`, "warn");
   }
 
+  throwIfDeploymentCancelled(phase.cancellationSignal);
   await onSuccess(ctx, {
     containerId: deployResult.containerId!,
     url: deployResult.url,

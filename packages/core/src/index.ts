@@ -22,6 +22,9 @@ export * from "./mail-image-ref";
 // that matches it at pull time must derive the registry from the SAME functions.
 export {
   buildImageRef,
+  isMutableImageRef,
+  type BaseImageReceipt,
+  type RuntimeImageReceipts,
   DOCKER_HUB_REGISTRY,
   normalizeRegistryHost,
   registryConfigKeys,
@@ -94,6 +97,7 @@ export * from "./data-transfer";
 export * from "./instance-address";
 export * from "./analytics-domain";
 export * from "./deployment-events";
+export * from "./deployment-resource-issue";
 export * from "./operation-limits";
 export type { ExecutionAuthority } from "./execution-authority";
 export * from "./sse";
@@ -127,3 +131,6 @@ export * from "./appearance";
 export * from "./command-environment";
 
 export * from "./build-caches";
+
+export * from "./compose-interpolation";
+export * from "./service-env-layers";
