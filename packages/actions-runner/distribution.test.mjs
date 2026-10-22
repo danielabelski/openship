@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -209,6 +218,59 @@ test("rejects truncated or corrupted archive bytes and preserves the installed c
     f.close();
   }
 });
+
+test("keeps the installed files until the complete replacement has verified", async () => {
+  const f = fixture();
+  mkdirSync(f.destination);
+  writeFileSync(join(f.destination, "previous"), "keep");
+  try {
+    await install(f, {
+      verify(staged) {
+        assert.equal(readFileSync(join(f.destination, "previous"), "utf8"), "keep");
+        return verifyRunnerAssets(staged);
+      },
+    });
+    assert.deepEqual(verifyRunnerAssets(f.destination), verifyRunnerAssets(f.dist));
+    assert.throws(() => readFileSync(join(f.destination, "previous")), /ENOENT/);
+    assert.equal(
+      readdirSync(f.root).some((name) => name.startsWith(".actions-worker-")),
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+for (const rollbackFails of [false, true])
+  test(`preserves the previous files when replacement fails and rollback ${rollbackFails ? "also fails" : "succeeds"}`, async () => {
+    const f = fixture();
+    mkdirSync(f.destination);
+    writeFileSync(join(f.destination, "previous"), "keep");
+    let moves = 0;
+    try {
+      await assert.rejects(
+        install(f, {
+          renameImpl(from, to) {
+            moves++;
+            if (moves === 2 || (rollbackFails && moves === 3))
+              throw new Error("fixture filesystem replacement failure");
+            renameSync(from, to);
+          },
+        }),
+        rollbackFails ? /previous files are preserved at/ : /filesystem replacement failure/,
+      );
+      const backups = readdirSync(f.root).filter((name) => name.startsWith(".actions-worker-"));
+      if (rollbackFails) {
+        assert.equal(backups.length, 1);
+        assert.equal(readFileSync(join(f.root, backups[0], "previous/previous"), "utf8"), "keep");
+      } else {
+        assert.equal(readFileSync(join(f.destination, "previous"), "utf8"), "keep");
+        assert.deepEqual(backups, []);
+      }
+    } finally {
+      f.close();
+    }
+  });
 
 for (const [name, overrides, message] of [
   ["stale source", { source: "0".repeat(64) }, /need rebuilding/],

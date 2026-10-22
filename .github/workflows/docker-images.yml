@@ -43,7 +43,7 @@ jobs:
     name: Publish verified Actions worker files
     if: github.event_name == 'workflow_dispatch' && inputs.runner_assets_only == true
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       OPENSHIP_ACTIONS_RUNNER_BUILD: "1"
     steps:
@@ -91,6 +91,20 @@ jobs:
         env:
           WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/openship-actions-runner@${{ steps.image.outputs.digest }}
         run: node packages/actions-runner/pin-artifact.mjs "$WORKER_IMAGE"
+      - name: Verify the published artifact is anonymously installable
+        env:
+          OPENSHIP_ACTIONS_RUNNER_BUILD: ""
+        run: |
+          node packages/actions-runner/assets.mjs --install
+          node --test packages/actions-runner/distribution.test.mjs
+      - name: Build the API image with the verified worker release
+        run: docker build --file apps/api/Dockerfile --tag openship-api-worker-check .
+      - name: Verify the API image embeds the matching workers
+        run: >-
+          docker run --rm --entrypoint node openship-api-worker-check
+          --input-type=module -e
+          'import { verifyRunnerAssets } from "./packages/actions-runner/assets.mjs";
+          console.log(JSON.stringify(verifyRunnerAssets()));'
       - uses: actions/upload-artifact@v7
         with:
           name: actions-worker-pins

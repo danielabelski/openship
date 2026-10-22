@@ -55,7 +55,7 @@ async function bytes(response, maximum) {
 export async function installRunnerArtifact(
   descriptor,
   destination,
-  { verify, fetchImpl = fetch, names },
+  { verify, fetchImpl = fetch, names, renameImpl = renameSync },
 ) {
   validateRunnerArtifact(descriptor);
   const [repository, imageDigest] = descriptor.image.slice("ghcr.io/".length).split("@");
@@ -119,6 +119,7 @@ export async function installRunnerArtifact(
   const temporary = mkdtempSync(join(dirname(destination), ".actions-worker-"));
   const archive = join(temporary, "layer.tar.gz");
   const staged = join(temporary, "dist");
+  let preserveBackup = false;
   try {
     const response = await request(`${registry}/blobs/${layer.digest}`);
     if (!response.ok || !response.body)
@@ -190,18 +191,29 @@ export async function installRunnerArtifact(
     const previous = join(temporary, "previous");
     let moved = false;
     try {
-      renameSync(destination, previous);
+      renameImpl(destination, previous);
       moved = true;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
     try {
-      renameSync(staged, destination);
+      renameImpl(staged, destination);
     } catch (error) {
-      if (moved) renameSync(previous, destination);
+      if (moved) {
+        try {
+          renameImpl(previous, destination);
+        } catch (restoreError) {
+          // A failed rollback must never delete the only surviving old copy.
+          preserveBackup = true;
+          throw new AggregateError(
+            [error, restoreError],
+            `Actions worker replacement failed; previous files are preserved at ${previous}`,
+          );
+        }
+      }
       throw error;
     }
   } finally {
-    rmSync(temporary, { recursive: true, force: true });
+    if (!preserveBackup) rmSync(temporary, { recursive: true, force: true });
   }
 }
