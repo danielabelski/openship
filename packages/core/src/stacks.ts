@@ -214,6 +214,8 @@ export interface StackRole {
   /** Wait after the stop signal before SIGKILL, compose duration (e.g. "90s", "10m"). */
   stopGracePeriod?: string;
   health?: RoleHealth;
+  /** Preset-only exclusive slot. Independent roles omit this; never runtime configuration. */
+  slot?: string;
   /** Preset gating only: every signal must match. Ignored for openship.json roles. */
   when?: {
     deps?: readonly string[];
@@ -246,6 +248,8 @@ export interface StackDefinition {
   defaultBuildCommand: string;
   /** Default start command */
   defaultStartCommand: string;
+  /** Verified self-contained server artifact; preparers share this across build runtimes. */
+  serverOutput?: { kind: "nextjs" | "node"; directory: string; entry: string };
   /**
    * Optional web startup optimization, enabled by openship.json `optimize`.
    * Runs with the runtime environment before the resolved start command.
@@ -314,9 +318,11 @@ export const STACKS = {
     defaultPort: 3000,
     defaultBuildCommand: "next build",
     defaultStartCommand: "next start",
+    serverOutput: { kind: "nextjs", directory: ".next", entry: "server.js" },
     requiredToolVersions: { node: "20.9.0" },
     cacheDirs: [".next/cache"],
-    buildCacheDirs: [".next/cache"],    detection: {
+    buildCacheDirs: [".next/cache"],
+    detection: {
       rootMarkers: ["next.config.js", "next.config.mjs", "next.config.ts"],
       deps: ["next"],
     },
@@ -359,7 +365,9 @@ export const STACKS = {
     defaultPort: 3000,
     defaultBuildCommand: "nuxt build",
     defaultStartCommand: "node .output/server/index.mjs",
-    cacheDirs: [".nuxt"],    detection: {
+    serverOutput: { kind: "node", directory: ".output", entry: "server/index.mjs" },
+    cacheDirs: [".nuxt"],
+    detection: {
       rootMarkers: ["nuxt.config.js", "nuxt.config.ts", "nuxt.config.mjs"],
       deps: ["nuxt", "@nuxt/core"],
     },
@@ -796,6 +804,7 @@ export const STACKS = {
       {
         name: "jobs",
         kind: "worker",
+        slot: "queue",
         command: "exec bin/jobs",
         stopGracePeriod: "10s",
         when: { deps: ["solid_queue"], files: ["bin/jobs"] },
@@ -803,6 +812,7 @@ export const STACKS = {
       {
         name: "sidekiq",
         kind: "worker",
+        slot: "queue",
         command: "exec bundle exec sidekiq",
         stopGracePeriod: "45s",
         when: { deps: ["sidekiq"] },
@@ -870,17 +880,24 @@ export const STACKS = {
     // laravel/horizon still selects `horizon`. Callers that need
     // production-only matching must read `require` from composer.json.
     //
-    // Explicit shutdown budgets for the later runtime slice. 90s exceeds the
-    // default 60s queue and Horizon supervisor timeouts, so size these to the
-    // application's own configured timeouts. Horizon's internal settings still
-    // govern worker draining, and scheduler grace is provisional because
-    // shutdown behaviour depends on the Laravel version. An explicit
-    // openship.json `roles` array replaces all presets, so declare grace
-    // periods there to keep these values.
+    // Explicit shutdown budgets. The workers' 90s exceeds the default 60s queue
+    // and Horizon supervisor timeouts, so size it to the application's own
+    // configured timeouts. Horizon's internal settings still govern worker
+    // draining. The scheduler's 10s favors short shutdown and handover latency
+    // over task completion. The inspected Laravel 12.x versions lack coordinated
+    // `schedule:work` shutdown, so work can continue until Docker kills the
+    // container. Laravel 13.18.0 with signal handling available stops new runs
+    // on INT, TERM or QUIT and waits for existing ones, but detached background
+    // tasks may not complete. A foreground scheduled command with more than 10
+    // seconds left can be killed on either version. Applications that need
+    // completion should use a verified draining version and size the grace for
+    // the whole remaining run. An explicit openship.json `roles` array replaces
+    // all presets, so declare grace periods there to keep these values.
     defaultRoles: [
       {
         name: "queue",
         kind: "worker",
+        slot: "queue",
         command: "exec php artisan queue:work",
         stopGracePeriod: "90s",
         unless: { deps: ["laravel/horizon"] },
@@ -888,6 +905,7 @@ export const STACKS = {
       {
         name: "horizon",
         kind: "worker",
+        slot: "queue",
         command: "exec php artisan horizon",
         stopGracePeriod: "90s",
         when: { deps: ["laravel/horizon"] },
@@ -896,7 +914,8 @@ export const STACKS = {
         name: "scheduler",
         kind: "scheduler",
         command: "exec php artisan schedule:work",
-        stopGracePeriod: "90s",
+        stopSignal: "SIGTERM",
+        stopGracePeriod: "10s",
         singleton: true,
       },
     ],
@@ -1589,3 +1608,11 @@ export const STACK_ICONS: Partial<Record<StackId, string>> = {
   docker:      `${DI}/docker/docker-original.svg`,
   "docker-compose": `${DI}/docker/docker-original.svg`,
 };
+
+/** A recorded role replica; reused configuration revisions retain its creation owner. */
+export interface RoleContainerRef {
+  role: string;
+  replica: number;
+  containerId: string;
+  ownerDeploymentId?: string;
+}

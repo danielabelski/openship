@@ -13,6 +13,7 @@
 
 import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import type { DeploymentConfigSnapshot } from "./build.service";
+import { env } from "../../config/env";
 import { platform } from "../../lib/platform-config";
 import {
   resolveEffectiveTarget,
@@ -28,6 +29,10 @@ import {
   describeResourceFit,
   fitsCapacity,
   hasMinResources,
+  commandEnvironmentWarning,
+  manualBuildCaches,
+  normalizeAppVolume,
+  parseVolumeMount,
 } from "@repo/core";
 import { cloudClient } from "../../lib/cloud/client";
 import { isCloudConnectedForOrg } from "../../lib/cloud/session";
@@ -1508,6 +1513,24 @@ export async function runPreflightChecks(
       ? { id: "stack", label: "Service stack", status: "pass" }
       : checkStack(snapshot),
   ];
+  const commandOwners = [{ name: "Project", ...snapshot }, ...(opts?.composeServices ?? []).map(s => ({ ...s, name: `Service ${s.name}` }))];
+  for (const [index, owner] of commandOwners.entries()) {
+    for (const field of ["installCommand", "buildCommand", "startCommand"] as const) {
+      const message = commandEnvironmentWarning(owner[field] ?? "", `${owner.name} ${field}`);
+      if (message) checks.push({ id: `command-env-${index}-${field}`, label: "Command environment", status: "warn", message });
+    }
+    if (owner.framework === "nextjs" && owner.rootDirectory && /(?:^|\s)node\s+\.next\/standalone\/server\.js(?:$|\s)/.test(owner.startCommand ?? "")) {
+      checks.push({ id: `standalone-start-${index}`, label: "Application output", status: "warn", message: `${owner.name} hardcodes a standalone server path. Monorepo output can nest the server under the app directory. Clear the Start override to let Openship locate the server and copy its static/public assets.` });
+    }
+    const caches = manualBuildCaches(owner);
+    if (caches.length) checks.push({ id: `manual-cache-${index}`, label: "Build caches", status: "warn", message: `${owner.name} has manual mounts for managed build-cache paths: ${caches.map(cache => cache.target).join(", ")}. Use the managed-cache migration after a successful deployment.` });
+    const mounts = (owner.volumes ?? []).flatMap(spec => {
+      const normalized = normalizeAppVolume(spec);
+      return normalized ? [parseVolumeMount(normalized).target.replace(/\/+$/, "") || "/"] : [];
+    });
+    const duplicate = [...new Set(mounts.filter((target, index) => mounts.indexOf(target) !== index))];
+    if (duplicate.length) checks.push({ id: `duplicate-mount-${index}`, label: "Duplicate mounts", status: "warn", message: `${owner.name} mounts these paths more than once: ${duplicate.join(", ")}. Keep one mount per path.` });
+  }
 
   // Does this machine meet what the app says it needs? Cloud is sized from the
   // tier table, not from host hardware, so there is nothing to match there (and
@@ -1579,6 +1602,7 @@ export async function runPreflightChecks(
       )
     : null;
   const clonePlan = resolveClonePlan({
+    isHosted: env.CLOUD_MODE,
     effectiveTarget,
     serverId: plannedTarget?.serverId ?? snapshot.serverId,
     runtimeIsBare: runtimeMode === "bare",

@@ -61,6 +61,7 @@ export const endpoints = {
     sleepMode: (id: string | number) => `projects/${id}/sleep-mode`,
     deployments: (id: string | number) => `projects/${id}/deployments`,
     logs: (id: string | number) => `projects/${id}/logs`,
+    roles: (id: string | number) => `projects/${id}/roles`,
     logsStream: (id: string | number) => `projects/${id}/logs/stream`,
     serverLogsRecent: (id: string | number) => `projects/${id}/server-logs/recent`,
     serverLogsStreamToken: (id: string | number) => `projects/${id}/server-logs/stream-token`,
@@ -553,6 +554,8 @@ export const endpoints = {
     behind: "updates?behind=1",
     scan: "updates/scan",
     apply: (projectId: string) => `updates/${projectId}/apply`,
+    runtime: (projectId: string) => `updates/${projectId}/runtime`,
+    runtimeCheck: (projectId: string) => `updates/${projectId}/runtime/check`,
   },
 
   /* ---------------------------------------------------------------- */

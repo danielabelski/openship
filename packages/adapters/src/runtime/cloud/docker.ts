@@ -5,6 +5,7 @@ import { posix } from "node:path";
 import type { Oblien } from "oblien";
 import { AppError, SYSTEM, safeErrorMessage, isHostPathSource } from "@repo/core";
 import { DockerRuntime } from "../docker";
+import { imageVolumeName } from "../docker-image-volumes";
 import { BareRuntime } from "../bare";
 import { CloudServerConnection } from "./server-connection";
 import { CloudProcessSupervisor } from "./process-supervisor";
@@ -24,6 +25,7 @@ import type {
   MultiServiceDeployConfig,
   MultiServiceDeployResult,
   MultiServiceGroupHandle,
+  RuntimeCapability,
 } from "../types";
 import { CloudWorkspaceExecutor } from "./workspace-executor";
 import { CLOUD_DOCKER_BRIDGE_PORT } from "./docker-bridge-source";
@@ -36,7 +38,7 @@ import {
 } from "./workspace-ready";
 import { cloudDockerProjectPaths } from "./docker-paths";
 import { ensureCloudProjectVolume, resolveCloudProjectVolumeName } from "./docker-volume";
-import { prepareManagedSource } from "./source";
+import { prepareRemoteSource } from "../remote-source";
 import { pickHostPort } from "../host-port";
 import { scanPorts } from "../../system/port-scan";
 export { CLOUD_SERVER_IMAGE as CLOUD_DOCKER_IMAGE } from "./server-connection";
@@ -68,6 +70,10 @@ function notFound(error: unknown): boolean {
  * stays explicit: container IDs identify containers; workspaceId identifies the
  * shared host. Inherited retention/rollback never stop or delete that host. */
 export class CloudDockerRuntime extends DockerRuntime {
+  // Managed cloud refuses role containers for now; every other Docker capability is kept.
+  override readonly capabilities: ReadonlySet<RuntimeCapability> = new Set(
+    DockerRuntime.CAPABILITIES.filter(cap => cap !== "roles"),
+  );
   readonly workspaceId: string;
   readonly projectId: string;
   readonly executor: CloudWorkspaceExecutor;
@@ -189,15 +195,45 @@ export class CloudDockerRuntime extends DockerRuntime {
     return id;
   }
   override async removeNetwork(slug: string) {
-    try {
-      const network = await this.docker.getNetwork(`openship-${slug}`).inspect();
-      if (network.Labels?.["openship.project"] !== this.projectId)
-        throw new AppError("Network belongs to another project", 409, "CLOUD_NETWORK_CONFLICT");
-    } catch (error) {
-      if (notFound(error)) return;
-      throw error;
-    }
-    return super.removeNetwork(slug);
+    return this.removeScopedNetwork(slug, "strict");
+  }
+  /** A slug retained after migration can now name another project's network.
+   * Cleanup leaves a proven foreign owner alone; unknown ownership still fails. */
+  async removeProjectNetwork(slug: string): Promise<void> {
+    return this.removeScopedNetwork(slug, "project-cleanup");
+  }
+  private async removeScopedNetwork(
+    slug: string,
+    mode: "strict" | "project-cleanup",
+  ): Promise<void> {
+    return this.options.provisionLock.run(async () => {
+      try {
+        const network = await this.docker.getNetwork(`openship-${slug}`).inspect();
+        const owner = network.Labels?.["openship.project"];
+        if (owner !== this.projectId) {
+          if (
+            mode === "project-cleanup" &&
+            typeof owner === "string" &&
+            owner.length > 0 &&
+            owner.trim() === owner
+          )
+            return;
+          throw new AppError("Network belongs to another project", 409, "CLOUD_NETWORK_CONFLICT");
+        }
+        if (typeof network.Id !== "string" || !/^[a-f0-9]{64}$/.test(network.Id))
+          throw new AppError(
+            "Could not verify the network identity",
+            409,
+            "CLOUD_NETWORK_CONFLICT",
+          );
+        // Network names are reusable. Removing the inspected ID cannot target a
+        // replacement created with the same name after the ownership read.
+        await this.docker.getNetwork(network.Id).remove();
+      } catch (error) {
+        if (notFound(error)) return;
+        throw error;
+      }
+    });
   }
   override async listProjectContainerIds(id: string) {
     this.assertProject(id);
@@ -351,7 +387,7 @@ export class CloudDockerRuntime extends DockerRuntime {
       const source = `/tmp/openship-cloud-source-${createHash("sha256").update(config.sessionId).digest("hex").slice(0, 24)}`;
       await this.executor.mkdir(source);
       try {
-        if (await prepareManagedSource(this.connection, config, source, logger)) {
+        if (await prepareRemoteSource(this.connection, config, source, logger)) {
           // The source capability supplies already-authorized uploaded bytes.
         } else if (config.localPath) {
           await this.executor.transferIn(config.localPath, source, logger.callback);
@@ -493,6 +529,10 @@ export class CloudDockerRuntime extends DockerRuntime {
     );
     return this.ownedVolumeBinds(config.slug || config.projectId, volumes);
   }
+  // Managed mounts are already resolved and ownership-checked by Cloud
+  // activation. They never relied on Docker's anonymous-volume allocation.
+  override async prepareDeploymentVolumes(_config: DeployConfig): Promise<void> {}
+  override async prepareServiceVolumes(_config: MultiServiceDeployConfig): Promise<void> {}
   override async deploy(config: DeployConfig, onLog?: LogCallback) {
     this.assertProject(config.projectId);
     await this.canSpend();
@@ -718,11 +758,7 @@ export class CloudDockerRuntime extends DockerRuntime {
     for (const target of new Set(imageVolumes)) {
       if (!target.startsWith("/")) throw new Error("Invalid anonymous volume destination");
       if (targets.has(target)) continue;
-      const key = createHash("sha256")
-        .update(`${config.serviceName}:${target}`)
-        .digest("hex")
-        .slice(0, 24);
-      volumes.push(`data-${key}:${target}`);
+      volumes.push(`${imageVolumeName(config.serviceName, target)}:${target}`);
     }
     return volumes;
   }
@@ -855,7 +891,7 @@ export class CloudDockerRuntime extends DockerRuntime {
       await super.destroy(owned.Id);
     });
   }
-  async cleanupProject(
+  override async cleanupProject(
     projectId: string,
     options?: {
       wipeVolumes?: boolean;
@@ -864,7 +900,7 @@ export class CloudDockerRuntime extends DockerRuntime {
     this.assertProject(projectId);
     if ((await this.listProjectContainerIds(projectId)).length)
       throw new Error("Remove the project's containers before cleaning its storage");
-    await this.clearManagedProjectBuildCache(projectId);
+    await super.cleanupProject(projectId, options);
     if (options?.wipeVolumes) {
       // Include detached volumes left by interrupted deployments. Inventory is
       // label-scoped; retained data is removed only on the explicit wipe path.
@@ -872,7 +908,7 @@ export class CloudDockerRuntime extends DockerRuntime {
       await this.executor.exec(`rm -rf -- ${sq(this.projectPaths.mounts)}`);
     } else {
       await this.executor.exec(
-        `rm -rf -- ${sq(`${this.projectPaths.mounts}/releases`)} ${sq(`${this.projectPaths.mounts}/config`)}`,
+        `rm -rf -- ${sq(`${this.projectPaths.mounts}/releases`)} ${sq(`${this.projectPaths.mounts}/config`)} ${sq(`${this.projectPaths.bare}/.builds`)}`,
       );
     }
     await this.executor.exec(`rm -rf -- ${sq(this.projectPaths.routes)}`);

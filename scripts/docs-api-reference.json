@@ -57,7 +57,7 @@
     "deployments.redeploy": {
       "page": "deployments",
       "section": "Submit",
-      "description": "Submit a new deployment based on an existing release.",
+      "description": "Rebuild an existing release, or retry a failed attempt with its retained completed Docker images using reuseBuild.",
       "route": "POST /api/deployments/:id/redeploy"
     },
     "deployments.pin": {
@@ -492,10 +492,16 @@
       "description": "Repair routing with live logs and a terminal success or failure event.",
       "route": "POST /api/projects/:id/routing/retry/stream"
     },
+    "projects.getRuntimeRoles": {
+      "page": "projects",
+      "section": "Routing and monitoring",
+      "description": "Read active runtime roles, replica status, and restart counts.",
+      "route": "GET /api/projects/:id/roles"
+    },
     "projects.runtimeLogs": {
       "page": "projects",
       "section": "Routing and monitoring",
-      "description": "Read recent runtime log entries.",
+      "description": "Read recent runtime logs; optionally select a role, replica, and active deployment.",
       "route": "GET /api/projects/:id/logs"
     },
     "projects.getCloneToken": {
@@ -2388,6 +2394,18 @@
       "description": "Apply an available update to the specified project ID.",
       "route": "POST /api/updates/:projectId/apply"
     },
+    "updates.updateRuntime": {
+      "page": "updates",
+      "section": "Operations",
+      "description": "Refresh configured runtime images and rebuild selected services at the deployed source version.",
+      "route": "POST /api/updates/:projectId/runtime"
+    },
+    "updates.checkRuntime": {
+      "page": "updates",
+      "section": "Operations",
+      "description": "Compare deployed image and recorded base-image digests with the registry.",
+      "route": "POST /api/updates/:projectId/runtime/check"
+    },
     "audit.list": {
       "page": "audit",
       "section": "Operations",
@@ -3607,6 +3625,156 @@
       "description": "Permanently clear resolved incident history in the current organization; preserves active incidents and later recoveries. Owner/admin only.",
       "route": "DELETE /api/issues/history",
       "section": "Operations"
+    },
+    "settings.getAppearance": {
+      "page": "settings",
+      "section": "Operations",
+      "description": "Read the authenticated user’s saved appearance and portable theme library.",
+      "route": "GET /api/settings/appearance"
+    },
+    "settings.setAppearance": {
+      "page": "settings",
+      "section": "Operations",
+      "description": "Save or reset personal appearance, validated tokens and embedded WOFF2 fonts.",
+      "route": "PUT /api/settings/appearance"
+    },
+    "dns.listIngressConnections": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Read persisted tunnel connections, optionally filtered by deployment server.",
+      "route": "GET /api/dns/ingress"
+    },
+    "dns.discoverIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Discover accounts, named tunnels and optional reusable Access policies using a saved Cloudflare credential. Requires an organization administrator.",
+      "route": "POST /api/dns/ingress/discover"
+    },
+    "dns.connectIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Connect or create a named Cloudflare Tunnel on a self-hosted deployment server. Setup continues asynchronously.",
+      "route": "POST /api/dns/ingress"
+    },
+    "dns.updateIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Set automatic enrollment and Access policy defaults for future custom domains. Existing hostnames keep their settings.",
+      "route": "PUT /api/dns/ingress/:id"
+    },
+    "dns.retryIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Retry persisted tunnel setup or cleanup without creating another connection.",
+      "route": "POST /api/dns/ingress/:id/retry"
+    },
+    "dns.removeIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Disconnect a server tunnel and queue ownership-checked cleanup. Existing tunnels and reusable policies are retained.",
+      "route": "DELETE /api/dns/ingress/:id"
+    },
+    "dns.getDomainIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Read persisted tunnel, DNS and Access status for a project domain.",
+      "route": "GET /api/dns/ingress/domains/:id"
+    },
+    "dns.setDomainIngress": {
+      "page": "dns",
+      "section": "Cloudflare Tunnel ingress",
+      "description": "Connect a custom domain to its deployment server tunnel, change its Access policy or request disconnection.",
+      "route": "PUT /api/dns/ingress/domains/:id"
+    },
+    "projects.getRuntimeRoleConfiguration": {
+      "page": "projects",
+      "section": "Routing and monitoring",
+      "description": "Read active role definitions and the revision required to configure them.",
+      "route": "GET /api/projects/:id/roles/configuration"
+    },
+    "projects.configureRuntimeRoles": {
+      "page": "projects",
+      "section": "Routing and monitoring",
+      "description": "Apply a role configuration revision from the active image while preserving web and unchanged replicas.",
+      "route": "POST /api/projects/:id/roles/configuration"
+    },
+    "projects.buildCacheMigration": {
+      "page": "projects",
+      "section": "Operations",
+      "description": "Inspect manual cache mounts or remove selected mounts after a successful managed-cache deployment.",
+      "route": "POST /api/projects/:id/build-cache/migration"
+    },
+    "projects.configurePreviews": {
+      "page": "projects",
+      "section": "Operations",
+      "description": "Enable or disable automatic same-repository pull request environments.",
+      "route": "POST /api/projects/:id/previews"
+    },
+    "projects.listPreviews": {
+      "page": "projects",
+      "section": "Operations",
+      "description": "Read preview configuration, deployment URLs and reconciliation errors.",
+      "route": "GET /api/projects/:id/previews"
+    },
+    "projects.migrateCommandEnvironment": {
+      "page": "projects",
+      "section": "Operations",
+      "description": "Atomically move literal command variables into the selected environment without overwriting conflicting values.",
+      "route": "POST /api/projects/:id/env/migrate-commands"
+    },
+    "billing.getManagement": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Read hosted management pricing, paid access and the connected-server allowance.",
+      "route": "GET /api/billing/manage"
+    },
+    "billing.purchaseManagement": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Create or recover a Manage checkout, or quote an allowance change, using an idempotency key.",
+      "route": "POST /api/billing/manage/checkout"
+    },
+    "billing.confirmManagementChange": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Confirm the reviewed allowance quote; paid upgrades activate only after settlement.",
+      "route": "POST /api/billing/manage/change"
+    },
+    "billing.resumeManagementCheckout": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Resume the saved Manage checkout without creating another payment.",
+      "route": "POST /api/billing/manage/checkout/resume"
+    },
+    "billing.cancelManagementChange": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Cancel a pending allowance change without ending the current paid period.",
+      "route": "POST /api/billing/manage/change/cancel"
+    },
+    "billing.cancelManagementCheckout": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Cancel the saved unpaid Manage checkout.",
+      "route": "POST /api/billing/manage/checkout/cancel"
+    },
+    "billing.cancelManagementSubscription": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Stop Manage renewal; customer workloads and data remain on their infrastructure.",
+      "route": "POST /api/billing/manage/cancel"
+    },
+    "billing.resumeManagementSubscription": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Resume renewal at the verified saved price while its coverage terms still apply.",
+      "route": "POST /api/billing/manage/resume"
+    },
+    "billing.createManagementPortal": {
+      "page": "billing",
+      "section": "Hosted management",
+      "description": "Open payment details and invoices for the Manage subscription.",
+      "route": "POST /api/billing/manage/portal"
     }
   },
   "http": {

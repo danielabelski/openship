@@ -92,6 +92,55 @@ describe("parseOpenshipConfig", () => {
     expect(config?.services?.[0]?.resources).toMatchObject({ memoryMb: 4096 });
   });
 
+  it("accepts a per-service swap opt-in with a memory limit", () => {
+    const { errors, config } = parseOpenshipConfig({
+      services: [{ name: "api", image: "x", resources: { memoryMb: 1024, swapDisabled: true } }],
+    });
+    expect(errors).toEqual([]);
+    expect(config?.services?.[0]?.resources).toMatchObject({
+      memoryMb: 1024,
+      swapDisabled: true,
+    });
+  });
+
+  it("accepts a per-service swap opt-in inheriting the project memory limit", () => {
+    const { errors, config } = parseOpenshipConfig({
+      resources: { memoryMb: 2048 },
+      services: [{ name: "api", image: "x", resources: { swapDisabled: true } }],
+    });
+    expect(errors).toEqual([]);
+    expect(config?.services?.[0]?.resources?.swapDisabled).toBe(true);
+  });
+
+  it("preserves an explicit swap opt-out without requiring memory", () => {
+    const { errors, config } = parseOpenshipConfig({
+      services: [{ name: "api", image: "x", resources: { swapDisabled: false } }],
+    });
+    expect(errors).toEqual([]);
+    expect(config?.services?.[0]?.resources?.swapDisabled).toBe(false);
+  });
+
+  it("rejects swap-disabled services with an explicit zero memory limit", () => {
+    const { errors } = parseOpenshipConfig({
+      services: [{ name: "api", image: "x", resources: { memoryMb: 0, swapDisabled: true } }],
+    });
+    expect(errors.some((e) => e.includes("resources.swapDisabled"))).toBe(true);
+  });
+
+  it("rejects swap-disabled services with no effective memory limit", () => {
+    const { errors } = parseOpenshipConfig({
+      services: [{ name: "api", image: "x", resources: { swapDisabled: true } }],
+    });
+    expect(errors.some((e) => e.includes("resources.swapDisabled"))).toBe(true);
+  });
+
+  it("rejects swapDisabled at the project level (it is per-service)", () => {
+    const { errors } = parseOpenshipConfig({
+      resources: { memoryMb: 1024, swapDisabled: true },
+    });
+    expect(errors.some((e) => e.includes("resources.swapDisabled"))).toBe(true);
+  });
+
   it("coerces a string port and validates env value shape", () => {
     const ok = parseOpenshipConfig({ port: "8080", env: { A: "1" } });
     expect(ok.errors).toEqual([]);
@@ -504,6 +553,26 @@ describe("parseOpenshipConfig", () => {
       ]);
     });
 
+    it("warns that `when` and `unless` are ignored on an openship.json role", () => {
+      const horizon = { deps: ["laravel/horizon"] };
+      const { config, errors, warnings } = parseOpenshipConfig({
+        roles: [
+          { name: "queue", kind: "worker", command: "php artisan queue:work", unless: horizon },
+          { name: "horizon", kind: "worker", command: "php artisan horizon", when: horizon },
+          { name: "cron", kind: "scheduler", command: "bin/cron", when: {}, unless: {} },
+          { name: "jobs", kind: "worker", command: "bin/jobs" },
+        ],
+      });
+      expect(errors).toEqual([]);
+      expect(config?.roles?.map((role) => role.name)).toEqual(["queue", "horizon", "cron", "jobs"]);
+      expect(config?.roles?.some((role) => "when" in role || "unless" in role)).toBe(false);
+      expect(warnings).toEqual([
+        'roles[0] ("queue"): `unless` applies only to stack presets and is ignored, so this role always runs',
+        'roles[1] ("horizon"): `when` applies only to stack presets and is ignored, so this role always runs',
+        'roles[2] ("cron"): `when` and `unless` apply only to stack presets and are ignored, so this role always runs',
+      ]);
+    });
+
     it("an absent `roles` field parses byte-identical to a config with none declared", () => {
       const withoutRoles = parseOpenshipConfig({ framework: "rails" });
       expect(withoutRoles.config).not.toHaveProperty("roles");
@@ -590,6 +659,44 @@ describe("parseOpenshipConfig", () => {
       });
       expect(ok).toEqual([]);
       expect(config?.roles?.[0]?.replicas).toBe(1);
+    });
+
+    it.each(["Jobs", "jobs_1", "-jobs", "jobs-", "my worker", "jobs.1", "é", "a".repeat(64)])(
+      "rejects the non-DNS-label role name %j",
+      (name) => {
+        const { errors } = parseOpenshipConfig({
+          roles: [{ name, kind: "worker", command: "bin/jobs" }],
+        });
+        expect(errors.some((e) => e.startsWith("roles[0].name:") && e.includes("DNS label"))).toBe(
+          true,
+        );
+      },
+    );
+
+    it.each(["a", "jobs", "queue-2", "0", "a-b-c", "a".repeat(63)])(
+      "accepts the DNS-label role name %j",
+      (name) => {
+        const { errors, config } = parseOpenshipConfig({
+          roles: [{ name, kind: "worker", command: "bin/jobs" }],
+        });
+        expect(errors).toEqual([]);
+        expect(config?.roles?.[0]?.name).toBe(name);
+      },
+    );
+
+    it("accepts replicas up to 100 and rejects 101", () => {
+      const { errors: ok, config } = parseOpenshipConfig({
+        roles: [{ name: "jobs", kind: "worker", command: "bin/jobs", replicas: 100 }],
+      });
+      expect(ok).toEqual([]);
+      expect(config?.roles?.[0]?.replicas).toBe(100);
+
+      const { errors } = parseOpenshipConfig({
+        roles: [{ name: "jobs", kind: "worker", command: "bin/jobs", replicas: 101 }],
+      });
+      expect(errors.some((e) => e.startsWith("roles[0].replicas:") && e.includes("100"))).toBe(
+        true,
+      );
     });
 
     it("rejects health.kind http for roles and accepts process and exec", () => {
@@ -719,5 +826,28 @@ describe("parseOpenshipConfig", () => {
       const { errors } = parseOpenshipConfig({ optimize: "yes" });
       expect(errors.some((e) => e.startsWith("optimize:"))).toBe(true);
     });
+  });
+});
+
+
+describe("automatic deploy path overrides", () => {
+  it("accepts repo-relative includes and exclusions", () => {
+    const parsed = parseOpenshipConfig({
+      autoDeployPaths: { include: ["apps/web/**", "shared/**"], exclude: ["**/*.md"] },
+    });
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.config?.autoDeployPaths).toEqual({
+      include: ["apps/web/**", "shared/**"],
+      exclude: ["**/*.md"],
+    });
+  });
+  it("bounds pattern counts and rejects wrong types", () => {
+    for (const autoDeployPaths of [
+      { include: Array(51).fill("src/**") },
+      { exclude: "src/**" },
+      [],
+    ])
+      expect(parseOpenshipConfig({ autoDeployPaths }).errors.length).toBeGreaterThan(0);
   });
 });

@@ -26,7 +26,6 @@ import { ServerClustersPanel } from "@/components/servers/clusters/ServerCluster
 import { useServerClustersOverview } from "@/hooks/useServerClustersOverview";
 import { ServerDeletionModal } from "@/components/servers/ServerDeletionModal";
 import { ManagedServerStatus } from "@/components/servers/managed/ManagedServerStatus";
-import { newServerBillingHref } from "@/lib/billing-links";
 import { useCloudResourceKey } from "@/context/CloudResourceContext";
 import { ServerListSkeleton } from "./_components/server-list-skeleton";
 import * as CountryFlags from "country-flag-icons/react/3x2";
@@ -70,6 +69,10 @@ const STATUS: Record<Reachability, { dot: string; text: string }> = {
 };
 
 export default function ServersPage() {
+  return <ServerInventoryPage />;
+}
+
+function ServerInventoryPage() {
   const resourceKey = useCloudResourceKey();
   const resourceRef = useRef(resourceKey);
   resourceRef.current = resourceKey;
@@ -79,7 +82,7 @@ export default function ServersPage() {
   const { toast } = useToast();
   const isDesktop = deployMode === "desktop";
   /** Managed edge/mail containers exist only where we operate the boxes. */
-  const infraEnabled = selfHosted || isDesktop;
+  const infraEnabled = true;
 
   const searchParams = useSearchParams();
   const [clusterCapabilities, setClusterCapabilities] = useState<ClusterCapabilities | null>(null);
@@ -144,7 +147,7 @@ export default function ServersPage() {
       if (resourceRef.current !== resourceKey || request !== fetchRequest.current) return;
       setServersOwner(resourceKey);
       setServers(
-        list.map((s) => ({
+        list.filter(s => selfHosted || !s.managed && !s.isLocal).map((s) => ({
           id: s.id,
           name: s.name || s.sshHost || s.id,
           host: s.sshHost ?? "",
@@ -383,7 +386,7 @@ export default function ServersPage() {
           <h1 className="text-2xl font-medium text-foreground/80" style={{ letterSpacing: "-0.2px" }}>
             {t.servers.list.title}
           </h1>
-          <p className="text-sm text-muted-foreground/70 mt-1">{selfHosted ? t.servers.list.subtitle : t.billing.workspaces.description}</p>
+          <p className="text-sm text-muted-foreground/70 mt-1">{selfHosted ? t.servers.list.subtitle : "Your infrastructure, managed from Openship Cloud."}</p>
         </div>
         <div className="flex items-center gap-2">
         {activeTab === "servers" && <Button variant="ghost" size="icon" disabled={refreshing} aria-label={t.servers.networks.refresh} onClick={() => void fetchServers()}><UiIcon name="refresh" className={`size-4 ${refreshing ? "animate-spin" : ""}`} /></Button>}
@@ -415,11 +418,11 @@ export default function ServersPage() {
             />
           ) : (
             <button
-              onClick={() => router.push(selfHosted ? "/servers/new" : newServerBillingHref())}
+              onClick={() => router.push("/servers/new")}
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/25"
             >
               <UiIcon name="plus" className="size-4" />
-              {!selfHosted && servers.length === 0 ? t.billing.onboarding.choosePlan : t.servers.list.addServer}
+              {t.servers.list.addServer}
             </button>
           ))}
         {activeTab !== "servers" && clusterCapabilities?.available && (
@@ -493,8 +496,8 @@ export default function ServersPage() {
         (!loading && error && servers.length === 0 ? null : !loading && servers.length === 0 ? (
           // Empty state stands alone (no Quick Info card) and centers.
           <EmptyState
-            managed={!selfHosted}
-            onAdd={() => router.push(selfHosted ? "/servers/new" : newServerBillingHref())}
+            managed={false}
+            onAdd={() => router.push("/servers/new")}
             onAddThisMachine={canAddThisMachine ? () => void addThisMachine() : undefined}
           />
         ) : (

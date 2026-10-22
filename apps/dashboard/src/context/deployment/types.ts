@@ -85,7 +85,10 @@ export interface Screenshot {
  * change it. The dashboard's deployment context uses this name for
  * legacy reasons; new code should reach for PrepareComposeService.
  */
-export type ComposeServiceInfo = PrepareComposeService;
+export type ComposeServiceInfo = PrepareComposeService & {
+  /** UI-only draft of the same effective environment edited in the service panel. */
+  environmentDraft?: import("@/lib/service-environment-editor").ServiceEnvironmentDraft;
+};
 
 /**
  * Loosely-typed compose service as it arrives from any saved source — a DB
@@ -475,6 +478,8 @@ export interface DeploymentConfig {
   githubChecks?: import("@repo/core").GitHubDeploymentChecks | null;
   /** Ordered commands required before activating a single-app release. */
   releaseCommands?: string[] | null;
+  /** Runtime roles (workers, a scheduler) seeded from openship.json. Data only, no editor yet. */
+  roles?: import("@repo/core").StackRole[] | null;
   /**
    * What the scan's openship.json parse refused (#641). NOT a user setting — it's
    * a fresh observation of the repo, so it is never hydrated from the saved
@@ -801,6 +806,9 @@ export interface DeploymentState {
   deploymentCanceled: boolean;
   /** A cancelled row whose worker lease has not acknowledged completion yet. */
   cancellationPending: boolean;
+  /** A terminal outcome whose worker is still completing cleanup. */
+  completionPending: boolean;
+  canRetryDeployment: boolean;
   failureMessage: string;
   warningMessage: string;
   /**
@@ -871,6 +879,8 @@ export const INITIAL_STATE: DeploymentState = {
   deploymentFailed: false,
   deploymentCanceled: false,
   cancellationPending: false,
+  completionPending: false,
+  canRetryDeployment: false,
   failureMessage: "",
   warningMessage: "",
   decisionPending: false,
@@ -998,7 +1008,7 @@ export interface DeploymentContextType {
   connectToBuild: (deploymentId?: string, startBuild?: boolean) => Promise<void>;
   loadBuildSession: (deploymentId: string) => Promise<BuildSessionLoadResult>;
   stopDeployment: () => Promise<void>;
-  redeploy: (deploymentId: string) => Promise<string | null>;
+  redeploy: (deploymentId: string, options?: { reuseBuild?: boolean }) => Promise<string | null>;
   respondToPrompt: (action: string) => Promise<void>;
   /** Reflect a successful port edit/dismissal only in the deployment it belongs to. */
   resolvePortCheck: (deploymentId: string, target: number | string) => void;

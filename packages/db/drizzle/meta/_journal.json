@@ -1338,6 +1338,76 @@
       "when": 1791936000001,
       "tag": "0190_server_gpu_override",
       "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1792022400000,
+      "tag": "0191_project_lifecycle_operation",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1792022400001,
+      "tag": "0192_runtime_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1792022400002,
+      "tag": "0193_user_appearance",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1792022400003,
+      "tag": "0194_managed_ingress",
+      "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1792195200000,
+      "tag": "0195_role_handover",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1792195200001,
+      "tag": "0196_deployment_automation",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1792195200002,
+      "tag": "0197_preview_repository_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1792247996238,
+      "tag": "0198_webmail_host_alias",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1792586110310,
+      "tag": "0199_management_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1792670400000,
+      "tag": "0200_service_incident_identity",
+      "breakpoints": true
     }
   ]
 }

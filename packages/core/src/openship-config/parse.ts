@@ -35,17 +35,20 @@ import {
   type OpenshipService,
   type ParseResult,
 } from "./schema";
+import { normalizeRepoPattern } from "../source-access";
 import { validateImageReference } from "../project-source";
 import { isValidEnvKey, normalizeProjectRootDirectory } from "../utils";
 import { isRuntimeVersion, runtimeVersionError } from "../runtime-version";
 import { isValidServiceName } from "../service-name";
 import { isComposeDuration } from "../duration";
+import { resolveTierResources } from "../resources";
 
 const TOP_LEVEL_KEYS = new Set([
   "$schema",
   "framework",
   "packageManager",
   "rootDirectory",
+  "autoDeployPaths",
   "composePath",
   "installCommand",
   "buildCommand",
@@ -284,7 +287,12 @@ function parseRoutes(ctx: Ctx, v: unknown, path: string): RoutingConfig | undefi
   return routes;
 }
 
-function parseResources(ctx: Ctx, v: unknown, path: string): OpenshipResources | undefined {
+function parseResources(
+  ctx: Ctx,
+  v: unknown,
+  path: string,
+  opts?: { allowSwapDisabled?: boolean },
+): OpenshipResources | undefined {
   if (v === undefined) return undefined;
   if (!ctx.isObj(v)) {
     ctx.err(path, "must be an object");
@@ -300,7 +308,26 @@ function parseResources(ctx: Ctx, v: unknown, path: string): OpenshipResources |
     memoryMb: ctx.int(v.memoryMb, `${path}.memoryMb`, 0, 4194304),
     diskMb: ctx.int(v.diskMb, `${path}.diskMb`, 0, 204800),
   };
+  if (opts?.allowSwapDisabled) {
+    // Docker can only disable swap by pinning MemorySwap to a real Memory cap,
+    // so an explicit 0 is a configuration error rather than "inherit".
+    const swapDisabled = ctx.bool(v.swapDisabled, `${path}.swapDisabled`);
+    if (swapDisabled !== undefined) {
+      if (swapDisabled && r.memoryMb === 0) {
+        ctx.err(`${path}.swapDisabled`, "requires a positive memoryMb");
+      }
+      r.swapDisabled = swapDisabled;
+    }
+  } else if (v.swapDisabled !== undefined) {
+    ctx.err(`${path}.swapDisabled`, "is only supported on services[].resources");
+  }
   return r;
+}
+
+/** Memory implied by a resources block, including its tier when explicit. */
+function resourcesMemoryMb(resources: OpenshipResources | undefined): number | undefined {
+  if (resources?.memoryMb !== undefined) return resources.memoryMb;
+  return resources?.tier ? resolveTierResources(resources.tier).memoryMb : undefined;
 }
 
 /**
@@ -353,7 +380,12 @@ function parseHealthcheck(ctx: Ctx, v: unknown, path: string): OpenshipHealthche
   };
 }
 
-function parseServices(ctx: Ctx, v: unknown, path: string): OpenshipService[] | undefined {
+function parseServices(
+  ctx: Ctx,
+  v: unknown,
+  path: string,
+  projectResources?: OpenshipResources,
+): OpenshipService[] | undefined {
   if (v === undefined) return undefined;
   if (!Array.isArray(v)) {
     ctx.err(path, "must be an array of service objects");
@@ -378,6 +410,17 @@ function parseServices(ctx: Ctx, v: unknown, path: string): OpenshipService[] | 
       );
       return;
     }
+    const resources = parseResources(ctx, item.resources, `${p}.resources`, {
+      allowSwapDisabled: true,
+    });
+    if (resources?.swapDisabled) {
+      // The service's own memory wins over the project's when set; otherwise
+      // the limit can be inherited. Neither may resolve to "unlimited".
+      const memoryMb = resourcesMemoryMb(resources) ?? resourcesMemoryMb(projectResources) ?? 0;
+      if (memoryMb <= 0) {
+        ctx.err(`${p}.resources.swapDisabled`, "requires a positive memory limit");
+      }
+    }
     out.push({
       name,
       image: ctx.str(item.image, `${p}.image`),
@@ -395,7 +438,7 @@ function parseServices(ctx: Ctx, v: unknown, path: string): OpenshipService[] | 
       domain: ctx.str(item.domain, `${p}.domain`),
       healthcheck: parseHealthcheck(ctx, item.healthcheck, `${p}.healthcheck`),
       readiness: parseReadiness(ctx, item.readiness, `${p}.readiness`),
-      resources: parseResources(ctx, item.resources, `${p}.resources`),
+      resources,
     });
   });
   return out;
@@ -432,6 +475,11 @@ function parseRoleHealth(ctx: Ctx, v: unknown, path: string): RoleHealth | undef
   };
 }
 
+/** Role names land in container names and labels, so they must be DNS labels. */
+const ROLE_NAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+/** Matches the existing app-scaling limit (1-100). */
+const MAX_ROLE_REPLICAS = 100;
+
 /**
  * Runtime roles beyond the web process (issue #935). Presence of the field at
  * all - including `[]` - overrides the stack's own `defaultRoles` presets;
@@ -455,6 +503,13 @@ function parseRoles(ctx: Ctx, v: unknown, path: string): StackRole[] | undefined
     const name = ctx.str(item.name, `${p}.name`);
     if (!name?.trim()) {
       ctx.err(`${p}.name`, "requires a non-empty `name`");
+      return;
+    }
+    if (!ROLE_NAME_RE.test(name)) {
+      ctx.err(
+        `${p}.name`,
+        "must be a DNS label: lowercase letters, digits and dashes, starting and ending with a letter or digit, at most 63 characters",
+      );
       return;
     }
     if (seen.has(name)) {
@@ -492,6 +547,22 @@ function parseRoles(ctx: Ctx, v: unknown, path: string): StackRole[] | undefined
     }
     const stopSignal = parseStopSignal(ctx, item.stopSignal, `${p}.stopSignal`);
     const stopGracePeriod = parseStopGracePeriod(ctx, item.stopGracePeriod, `${p}.stopGracePeriod`);
+    // Preset gating only (see StackRole): a declared role always runs. Say so,
+    // or a role copied from a preset silently loses the condition it relied on.
+    const gateKeys = (["when", "unless"] as const).filter((key) => item[key] !== undefined);
+    if (gateKeys.length > 0) {
+      const keys = gateKeys.map((key) => `\`${key}\``).join(" and ");
+      const verbs =
+        gateKeys.length === 1
+          ? "applies only to stack presets and is"
+          : "apply only to stack presets and are";
+      ctx.warnings.push(`${p} ("${name}"): ${keys} ${verbs} ignored, so this role always runs`);
+    }
+    if (item.slot !== undefined) {
+      ctx.warnings.push(
+        `${p} ("${name}"): \`slot\` resolves alternatives only in stack presets; ignored for an explicit role. Declare only the roles you intend to run.`,
+      );
+    }
     out.push({
       name,
       kind,
@@ -531,8 +602,8 @@ function parseStopGracePeriod(ctx: Ctx, v: unknown, path: string): string | unde
 
 function parseReplicas(ctx: Ctx, v: unknown, path: string): number | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 1) {
-    ctx.err(path, "must be a safe integer >= 1");
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 1 || v > MAX_ROLE_REPLICAS) {
+    ctx.err(path, `must be an integer between 1 and ${MAX_ROLE_REPLICAS}`);
     return undefined;
   }
   return v;
@@ -636,6 +707,39 @@ function parseRuntimeVersion(ctx: Ctx, raw: unknown): string | undefined {
   return raw;
 }
 
+function parseAutoDeployPaths(ctx: Ctx, raw: unknown): OpenshipConfig["autoDeployPaths"] {
+  if (raw === undefined) return undefined;
+  if (!ctx.isObj(raw)) {
+    ctx.err("autoDeployPaths", "must be an object");
+    return undefined;
+  }
+  const result: NonNullable<OpenshipConfig["autoDeployPaths"]> = {};
+  for (const key of Object.keys(raw))
+    if (key !== "include" && key !== "exclude")
+      ctx.err(`autoDeployPaths.${key}`, "is not supported");
+  for (const key of ["include", "exclude"] as const) {
+    const patterns = ctx.strArray(raw[key], `autoDeployPaths.${key}`);
+    if (!patterns) continue;
+    if (patterns.length > 50) ctx.err(`autoDeployPaths.${key}`, "must have at most 50 patterns");
+    result[key] = [];
+    for (const pattern of patterns) {
+      const normalized = normalizeRepoPattern(pattern);
+      if (
+        !normalized ||
+        pattern.length > 200 ||
+        pattern.startsWith("/") ||
+        /[?!\[\]{}]/.test(pattern)
+      )
+        ctx.err(
+          `autoDeployPaths.${key}`,
+          "use repo-relative paths with * or **, without traversal or other glob operators",
+        );
+      else result[key]!.push(normalized);
+    }
+  }
+  return result;
+}
+
 /** Parse + validate raw `openship.json` JSON (already `JSON.parse`d) into a config. */
 export function parseOpenshipConfig(raw: unknown): ParseResult {
   const ctx = new Ctx();
@@ -647,10 +751,12 @@ export function parseOpenshipConfig(raw: unknown): ParseResult {
     if (!TOP_LEVEL_KEYS.has(key)) ctx.warnings.push(`Unknown field "${key}" (ignored)`);
   }
 
+  const resources = parseResources(ctx, raw.resources, "resources");
   const config: OpenshipConfig = {
     framework: ctx.enumOf(raw.framework, "framework", STACK_IDS),
     packageManager: parsePackageManager(ctx, raw.packageManager, "packageManager"),
     rootDirectory: ctx.str(raw.rootDirectory, "rootDirectory"),
+    autoDeployPaths: parseAutoDeployPaths(ctx, raw.autoDeployPaths),
     composePath: ctx.str(raw.composePath, "composePath"),
     installCommand: ctx.str(raw.installCommand, "installCommand"),
     buildCommand: ctx.str(raw.buildCommand, "buildCommand"),
@@ -671,9 +777,9 @@ export function parseOpenshipConfig(raw: unknown): ParseResult {
     env: parseEnv(ctx, raw.env, "env"),
     domains: parseDomains(ctx, raw.domains, "domains"),
     routes: parseRoutes(ctx, raw.routes, "routes"),
-    resources: parseResources(ctx, raw.resources, "resources"),
+    resources,
     readiness: parseReadiness(ctx, raw.readiness, "readiness"),
-    services: parseServices(ctx, raw.services, "services"),
+    services: parseServices(ctx, raw.services, "services", resources),
     monorepo: parseMonorepo(ctx, raw.monorepo, "monorepo"),
   };
 

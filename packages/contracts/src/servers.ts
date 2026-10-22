@@ -17,7 +17,7 @@ import {
   StartServerTunnelResultSchema,
 } from "./server-tunnels";
 import { AgentExecResultSchema } from "./services";
-import type { DeploymentEvent } from "./deployment-resources";
+import { ResourceIdSchema, type DeploymentEvent } from "./deployment-resources";
 import type {
   ResourceOperationSchema,
   ResourceOperations,
@@ -36,6 +36,18 @@ import {
   type ServerContainerInput,
   type ApplyServerContainerInput,
 } from "./server-containers";
+
+/** Default host stats remain compatible; usage is an opt-in managed resource sample. */
+export const ServerMonitorFormatSchema = Type.Union([Type.Literal("stats"), Type.Literal("usage")]);
+export interface ServerMonitorOptions {
+  signal?: AbortSignal;
+  format?: Static<typeof ServerMonitorFormatSchema>;
+}
+export const ResourceUsageSampleSchema = Type.Pick(CloudWorkspaceUsageSchema, [
+  "measuredAt", "cpuPercent", "memoryUsedMb", "memoryAvailableMb",
+  "diskUsedMb", "diskAvailableMb", "diskTotalMb",
+]);
+export type ResourceUsageSample = Static<typeof ResourceUsageSampleSchema>;
 
 const nullableString = Type.Union([Type.String(), Type.Null()]);
 export const ServerNetworkSettingsSchema = Type.Object({
@@ -408,7 +420,10 @@ export const ServerPortScanSchema = Type.Object({
 });
 
 export const ServerInstallSessionInputSchema = Type.Object(
-  { sessionId: Type.Optional(Type.String({ minLength: 1 })) },
+  {
+    sessionId: Type.Optional(Type.String({ minLength: 1 })),
+    serverId: Type.Optional(ResourceIdSchema),
+  },
   { additionalProperties: false },
 );
 export type ServerInstallSessionInput = Static<typeof ServerInstallSessionInputSchema>;
@@ -682,5 +697,5 @@ export interface ServerOperations
     input?: ServerInstallSessionInput,
     options?: { signal?: AbortSignal },
   ): AsyncIterable<DeploymentEvent>;
-  monitor(id: string, options?: { signal?: AbortSignal }): AsyncIterable<DeploymentEvent>;
+  monitor(id: string, options?: ServerMonitorOptions): AsyncIterable<DeploymentEvent>;
 }

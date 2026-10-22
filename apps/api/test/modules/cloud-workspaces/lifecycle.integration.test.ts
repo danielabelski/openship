@@ -1,3 +1,4 @@
+import { savedMonthlyHobby } from "../../helpers/saved-cloud-offer";
 import capacityCatalog from "../../fixtures/oblien-capacity-catalog.json";
 import { monthlyCloudBilling } from "../../helpers/monthly-cloud-offer";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
@@ -158,7 +159,7 @@ function subscribe(tier: "hobby" | "starter" = "hobby") {
     periodEnd: "2026-11-01T00:00:00Z",
     cancelAtPeriodEnd: false,
     canceledAt: null,
-    offer: subscriptionOffer(tier, "monthly"),
+    offer: tier === "hobby" ? savedMonthlyHobby() : subscriptionOffer(tier, "monthly"),
     metadata: subscriptionMetadata(tier, owner.orgId, namespace),
   });
 }
@@ -328,6 +329,47 @@ afterEach(async () => {
 });
 
 describe("subscription-owned Cloud workspace lifecycle", () => {
+  it("presents historical Cloud space progress without rewriting provider diagnostics or stored logs", async () => {
+    await provision();
+    const row = (await repos.cloudWorkspace.findById(workspace.id))!;
+    const providerDiagnostic = "Oblien server diagnostic: Server is ready for projects. (HTTP 503)";
+    const logs = [
+      "Waiting for the server to finish its current operation…",
+      "Checking the server and its current subscription…",
+      "Preparing the subscribed Docker host…",
+      "Resizing the server; running projects will briefly restart…",
+      "Confirming provider cleanup before removing this empty server…",
+      "Server capacity applied; previously running services restored.",
+      "Server is ready for projects.",
+      "Your Cloud space is ready for projects.",
+      providerDiagnostic,
+    ];
+    await repos.cloudWorkspace.updateOperation(
+      workspace.id,
+      { ...row.operation!, logs },
+      row.operation!.id,
+    );
+
+    const result = await request("GET", `/${workspace.id}`);
+    expect(result.status).toBe(200);
+    expect(result.body.managed.operation).toMatchObject({
+      id: row.operation!.id,
+      status: "succeeded",
+      logs: [
+        "Waiting for the Cloud space to finish its current operation…",
+        "Checking the Cloud space and its current subscription…",
+        "Preparing your Cloud space…",
+        "Applying Cloud space capacity; running projects will briefly restart…",
+        "Confirming cleanup before removing this unused Cloud space…",
+        "Cloud space capacity applied; previously running services restored.",
+        "Your Cloud space is ready for projects.",
+        "Your Cloud space is ready for projects.",
+        providerDiagnostic,
+      ],
+    });
+    expect((await repos.cloudWorkspace.findById(workspace.id))?.operation?.logs).toEqual(logs);
+  });
+
   it("keeps a first app's server identity through the plan refusal, payment and draft retry", async () => {
     owner = await seedOwner();
     const install = async () => {
@@ -853,7 +895,7 @@ describe("workspace payment and deletion races", () => {
       namespace: workspace.namespace!,
       kind: "subscription" as const,
       billingInterval: "monthly" as const,
-      offer: subscriptionOffer("hobby", "monthly"),
+      offer: savedMonthlyHobby(),
       metadata: subscriptionMetadata("hobby", owner.orgId, workspace.namespace!),
       successUrl: "https://app.openship.io/billing",
       cancelUrl: "https://app.openship.io/billing",
@@ -1495,7 +1537,7 @@ describe("provider subscription changes through billing and the shared server wo
     subscribe("starter"); await provision();
     const client = await billingClient();
     await expect(client.previewSubscriptionChange({ workspaceId: workspace.id, planTierId: "hobby", idempotencyKey: randomUUID() }))
-      .rejects.toMatchObject({ code: "CLOUD_WORKSPACE_DISK_SHRINK" });
+      .rejects.toMatchObject({ code: "BILLING_PLAN_RETIRED" });
     expect(h.billing.previewPlanChange).not.toHaveBeenCalled();
     const custom = customSubscriptionOffer({ cpuCores: 1, memoryMb: 4096, diskGb: 128 }).quote;
     const quote = await client.previewSubscriptionChange({ workspaceId: workspace.id, planTierId: custom.basePlanTierId,

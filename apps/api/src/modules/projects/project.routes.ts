@@ -134,7 +134,6 @@ r.get(
   "/:id/route-rules",
   {
     tag: "project:read",
-    localOnly: true,
     mcp: {
       description:
         "List project edge rules for rate limits, access restrictions and traffic filtering.",
@@ -146,7 +145,6 @@ r.post(
   "/:id/route-rules",
   {
     tag: "project:write",
-    localOnly: true,
     body: RouteRuleInputSchema,
     auditHandledByOperation: true,
     mcp: {
@@ -160,7 +158,6 @@ r.patch(
   "/:id/route-rules/:ruleId",
   {
     tag: "project:write",
-    localOnly: true,
     auditHandledByOperation: true,
     mcp: {
       description:
@@ -174,7 +171,6 @@ r.delete(
   "/:id/route-rules/:ruleId",
   {
     tag: "project:write",
-    localOnly: true,
     auditHandledByOperation: true,
     mcp: {
       description:
@@ -189,10 +185,9 @@ r.get(
   "/:id/incidents",
   {
     tag: "project:read",
-    localOnly: true,
     mcp: {
       description:
-        "Container runtime health for this project: OPEN incidents (a workload the health watch found `unhealthy`, `crash_loop`, or `down`, each with its reason, exit code, restart count, OOM flag and a log excerpt) plus recently-resolved ones. Two fields decide whether an empty list means anything, so always read them: `watching` is false when health monitoring is turned OFF — with it off, the absence of incidents is NOT evidence of health; `serverUnreachable` is non-null when the box itself is unreachable, in which case this project's rows are frozen and stale (nothing is being observed). Read this whenever a project looks unhealthy, or a deploy that reported success still isn't serving — it reports the RUNTIME state and complements the pending-actions tool (which covers deploy/domain/routing items that each carry a concrete fix). Incidents auto-resolve when the workload recovers; the usual move for an open one is to redeploy or inspect its `logExcerpt`. Self-hosted only.",
+        "Container runtime health for this project: OPEN incidents (a workload the health watch found `unhealthy`, `crash_loop`, or `down`, each with its reason, exit code, restart count, OOM flag and a log excerpt) plus recently-resolved ones. Two fields decide whether an empty list means anything, so always read them: `watching` is false when health monitoring is turned OFF — with it off, the absence of incidents is NOT evidence of health; `serverUnreachable` is non-null when the box itself is unreachable, in which case this project's rows are frozen and stale (nothing is being observed). Read this whenever a project looks unhealthy, or a deploy that reported success still isn't serving — it reports the RUNTIME state and complements the pending-actions tool (which covers deploy/domain/routing items that each carry a concrete fix). Incidents auto-resolve when the workload recovers; the usual move for an open one is to redeploy or inspect its `logExcerpt`. For customer-owned servers, including hosted Manage.",
     },
   },
   incidents.listProjectIncidents,
@@ -526,6 +521,19 @@ r.post(
 );
 
 /* ─── Environment variables ────────────────────────────────────────────── */
+r.get("/:id/previews", { tag: "project:read", mcp: { description: "List managed pull request previews, URLs, lifecycle state, and configuration." } }, ctrl.listPreviews);
+r.post("/:id/previews", { tag: "project:write", body: ProjectControlSchemas.configurePreviews.input,
+  mcp: { description: "Enable or disable isolated same-repository pull request previews. Preview Environment values are used; disabling cleans up managed previews." },
+}, ctrl.configurePreviews);
+r.post("/:id/build-cache/migration", {
+  tag: "project:write", body: ProjectControlSchemas.buildCacheMigration.input,
+  mcp: { description: "Inspect manual build cache mounts and migrate selected mounts after a successful managed-cache deployment. Cached volume data is retained." },
+}, ctrl.buildCacheMigration);
+r.post("/:id/env/migrate-commands", {
+  tag: "project:write",
+  body: ProjectControlSchemas.migrateCommandEnvironment.input,
+  mcp: { description: "Atomically move literal command variables into encrypted project or service Environment. Refuses changed commands, shell expressions, and conflicting values." },
+}, ctrl.migrateCommandEnvironment);
 // Project-scoped bulk routes (no per-env_var id in the URL) → gate on the
 // project, matching what the controllers already assert (permission.assert
 // project:read/write) and how /:id/options works. The previous
@@ -1132,7 +1140,25 @@ r.post(
   ctrl.connectDomain,
 );
 
+/* ─── Runtime role configuration ───────────────────────────────────────── */
+r.get("/:id/roles/configuration", { tag: "project:read", readOnly: true,
+  mcp: { description: "Read editable runtime role settings from the active Docker release." } }, ctrl.runtimeRoleConfiguration);
+r.post("/:id/roles/configuration", { tag: "project:write", body: ProjectControlSchemas.configureRuntimeRoles.input,
+  mcp: { description: "Apply runtime role settings using the active image without rebuilding or restarting web. Expected release and project revision prevent stale edits." } }, ctrl.configureRuntimeRoles);
+
 /* ─── Runtime logs ─────────────────────────────────────────────────────── */
+r.get(
+  "/:id/roles",
+  {
+    tag: "project:read",
+    readOnly: true,
+    mcp: {
+      description:
+        "Read the active deployment's runtime roles, replicas, live status, and restart counts.",
+    },
+  },
+  ctrl.runtimeRoles,
+);
 r.get(
   "/:id/logs",
   {
@@ -1146,6 +1172,7 @@ r.get(
   "/:id/logs/stream",
   {
     tag: "project:read",
+    query: ProjectControlSchemas.runtimeLogs.input,
     mcpExcluded:
       "SSE transport for live progress. Use the resource’s JSON status/log tools over MCP, or an authenticated HTTP client for streaming.",
   },

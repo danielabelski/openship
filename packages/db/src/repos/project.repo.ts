@@ -1,5 +1,5 @@
 import { eq, and, or, isNull, isNotNull, inArray, desc, sql, type SQL } from "drizzle-orm";
-import { generateId, ForbiddenError, UnauthorizedError } from "@repo/core";
+import { generateId, ForbiddenError, UnauthorizedError, ConflictError, ValidationError, inspectCommandEnvironment, manualBuildCaches } from "@repo/core";
 import type { Database, DatabaseTransaction } from "../connection";
 import { createConfigurationSecrets, type ConfigurationEncryption } from "../configuration-secrets";
 import { project, projectGroup, envVar, deployment, service } from "../schema";
@@ -13,6 +13,7 @@ import { personalAccessTokenGrant } from "../schema/personal-access-token-grant"
 import { personalAccessToken } from "../schema/personal-access-token";
 import { assertCloudWorkspacePlacement } from "./cloud-workspace.repo";
 import { projectWorkspaceScope } from "./workspace-scope";
+import { assertProjectSwapResources } from "./service-swap-resources";
 import { assertProjectConfigurationWritable, withProjectConfigurationWrite } from "./project-work-admission";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -512,6 +513,9 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
 
     async update(id: string, data: Partial<NewProject>) {
       await withProjectConfigurationWrite(db, eq(project.id, id), async (tx) => {
+        if (data.resources !== undefined) {
+          await assertProjectSwapResources(tx, eq(project.id, id), data.resources, codec);
+        }
         if (data.workspaceId !== undefined) {
           const current = await tx.query.project.findFirst({ where: eq(project.id, id) });
           if (current && data.workspaceId !== current.workspaceId) throw new Error("Changing a project's Cloud workspace requires an explicit migration");
@@ -540,10 +544,12 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
 
     async updateByApp(groupId: string, data: Partial<NewProject>) {
       const predicate = and(eq(project.groupId, groupId), isNull(project.deletedAt))!;
-      await withProjectConfigurationWrite(db, predicate, async (tx) => tx
-        .update(project)
-        .set({ ...data, updatedAt: new Date() })
-        .where(predicate));
+      await withProjectConfigurationWrite(db, predicate, async (tx) => {
+        if (data.resources !== undefined) {
+          await assertProjectSwapResources(tx, predicate, data.resources, codec);
+        }
+        await tx.update(project).set({ ...data, updatedAt: new Date() }).where(predicate);
+      });
     },
 
     /** Update a source identity shared by every environment and its project_app
@@ -557,7 +563,11 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
     ) {
       const updatedAt = new Date();
       await db.transaction(async (tx) => {
-        await assertProjectConfigurationWritable(tx, and(eq(project.groupId, groupId), isNull(project.deletedAt))!);
+        const predicate = and(eq(project.groupId, groupId), isNull(project.deletedAt))!;
+        await assertProjectConfigurationWritable(tx, predicate);
+        if (projectData.resources !== undefined) {
+          await assertProjectSwapResources(tx, predicate, projectData.resources, codec);
+        }
         await tx
           .update(project)
           .set({ ...projectData, updatedAt })
@@ -648,13 +658,42 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
       return rows.length > 0;
     },
 
-    /** Release the deletion-in-progress flag — call on every failure path so
-     *  ordinary project writes are admitted again after a partial teardown. */
+    /** Release a transient fence after preflight rejection or receipt-managed
+     * promotion cleanup. Ordinary partial deletion stays fenced. */
     async clearDeletionInProgress(id: string) {
       await db
         .update(project)
-        .set({ deletionInProgress: false, cloudPromotion: sql`${project.cloudPromotion} - 'cleanupInProgress'`, updatedAt: new Date() })
+        .set({
+          deletionInProgress: false,
+          lifecycleOperation: null,
+          cloudPromotion: sql`${project.cloudPromotion} - 'cleanupInProgress'`,
+          updatedAt: new Date(),
+        })
         .where(eq(project.id, id));
+    },
+
+    /** Workers have quiesced. Fence configuration before reading cleanup manifests. */
+    async beginDeletionCleanup(id: string): Promise<boolean> {
+      const rows = await db
+        .update(project)
+        .set({ lifecycleOperation: { kind: "delete", status: "running" }, updatedAt: new Date() })
+        .where(
+          and(eq(project.id, id), eq(project.deletionInProgress, true), isNull(project.deletedAt)),
+        )
+        .returning();
+      return rows.length > 0;
+    },
+
+    /** Caller holds the project runtime lock. A retry preserves this operation's fence. */
+    async markDeletionFailed(id: string, error: string) {
+      await db
+        .update(project)
+        .set({
+          deletionInProgress: true,
+          lifecycleOperation: { kind: "delete", status: "failed", error },
+          updatedAt: new Date(),
+        })
+        .where(and(eq(project.id, id), isNull(project.deletedAt)));
     },
 
     /**
@@ -876,6 +915,189 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
             })),
           );
         }
+      });
+    },
+
+    /** Commands and encrypted variables move together, under the configuration lock. */
+    async migrateCommandEnvironment(
+      projectId: string,
+      organizationId: string,
+      input: {
+        environment: string;
+        serviceId?: string;
+        commands: Partial<Record<"installCommand" | "buildCommand" | "startCommand", string>>;
+      },
+    ) {
+      return db.transaction(async (tx) => {
+        await assertProjectConfigurationWritable(
+          tx,
+          and(eq(project.id, projectId), eq(project.organizationId, organizationId))!,
+        );
+        const [owner] = await tx
+          .select({ id: project.id })
+          .from(project)
+          .where(and(eq(project.id, projectId), eq(project.organizationId, organizationId)));
+        if (!owner) throw new ForbiddenError("Project is unavailable");
+        const row = input.serviceId
+          ? (
+              await tx
+                .select()
+                .from(service)
+                .where(and(eq(service.id, input.serviceId), eq(service.projectId, projectId)))
+                .for("update")
+            )[0]
+          : (
+              await tx
+                .select()
+                .from(project)
+                .where(and(eq(project.id, projectId), eq(project.organizationId, organizationId)))
+                .for("update")
+            )[0];
+        if (!row) throw new ForbiddenError("Configuration is unavailable");
+        const update: Partial<Record<"installCommand" | "buildCommand" | "startCommand", string>> =
+          {};
+        const variables: Record<string, string> = {};
+        for (const field of ["installCommand", "buildCommand", "startCommand"] as const) {
+          if (input.commands[field] === undefined) continue;
+          if (row[field] !== input.commands[field])
+            throw new ConflictError("Commands changed. Reload before migrating variables.");
+          const parsed = inspectCommandEnvironment(row[field] ?? "");
+          if (!parsed.migratable)
+            throw new ValidationError(
+              `${field} contains shell expressions or has no literal variables to migrate`,
+            );
+          for (const [key, value] of Object.entries(parsed.variables)) {
+            if (Object.hasOwn(variables, key) && variables[key] !== value)
+              throw new ConflictError(
+                `Commands use different values for ${key}. Resolve the difference before migrating.`,
+              );
+            variables[key] = value;
+          }
+          update[field] = parsed.command;
+        }
+        if (!Object.keys(update).length) throw new ValidationError("Select a command to migrate");
+        const existing = await tx
+          .select()
+          .from(envVar)
+          .where(and(...envVarScope(projectId, input.environment, input.serviceId ?? null)));
+        const inherited = input.serviceId
+          ? await tx
+              .select()
+              .from(envVar)
+              .where(and(...envVarScope(projectId, input.environment, null)))
+          : [];
+        for (const [key, value] of Object.entries(variables)) {
+          const stored = existing.find((v) => v.key === key) ?? inherited.find((v) => v.key === key);
+          if (stored) {
+            if (encryption.decrypt(stored.value) !== value)
+              throw new ConflictError(
+                `Environment already has a different value for ${key}. Resolve the difference before migrating.`,
+              );
+            continue;
+          }
+          await tx
+            .insert(envVar)
+            .values({
+              id: generateId("env"),
+              projectId,
+              serviceId: input.serviceId ?? null,
+              environment: input.environment,
+              key,
+              value: encryption.encrypt(value),
+              isSecret: true,
+            });
+        }
+        if (input.serviceId)
+          await tx
+            .update(service)
+            .set({ ...update, updatedAt: new Date() })
+            .where(and(eq(service.id, input.serviceId), eq(service.projectId, projectId)));
+        else
+          await tx
+            .update(project)
+            .set({ ...update, updatedAt: new Date() })
+            .where(eq(project.id, projectId));
+        return { keys: Object.keys(variables), commands: update };
+      });
+    },
+
+    async buildCacheMigration(
+      projectId: string,
+      organizationId: string,
+      serviceId?: string,
+      remove?: string[],
+    ) {
+      return db.transaction(async (tx) => {
+        await assertProjectConfigurationWritable(tx, eq(project.id, projectId));
+        const [owner] = await tx
+          .select()
+          .from(project)
+          .where(and(eq(project.id, projectId), eq(project.organizationId, organizationId)));
+        if (!owner) throw new ForbiddenError("Project is unavailable");
+        const row = serviceId
+          ? (
+              await tx
+                .select()
+                .from(service)
+                .where(and(eq(service.id, serviceId), eq(service.projectId, projectId)))
+            )[0]
+          : owner;
+        if (!row) throw new ForbiddenError("Service is unavailable");
+        const candidates = manualBuildCaches(row);
+        const receipt = owner.buildCacheReceipts?.[serviceId ?? projectId];
+        const built = receipt
+          ? (
+              await tx
+                .select()
+                .from(deployment)
+                .where(
+                  and(eq(deployment.id, receipt.deploymentId), eq(deployment.projectId, projectId)),
+                )
+            )[0]
+          : null;
+        const canMigrate =
+          owner.runtimeMode !== "bare" &&
+          built?.status === "ready" &&
+          candidates.length > 0 &&
+          candidates.every((item) => receipt?.targets.includes(item.target));
+        if (remove?.length) {
+          if (!canMigrate || remove.some((spec) => !candidates.some((item) => item.spec === spec)))
+            throw new ConflictError(
+              "Deploy successfully with managed caches before removing these manual mounts. Reload if the configuration changed.",
+            );
+          const volumes = (row.volumes ?? []).filter((spec) => !remove.includes(spec));
+          if (serviceId)
+            await tx
+              .update(service)
+              .set({ volumes, updatedAt: new Date() })
+              .where(eq(service.id, serviceId));
+          else
+            await tx
+              .update(project)
+              .set({ volumes, updatedAt: new Date() })
+              .where(eq(project.id, projectId));
+        }
+        return {
+          candidates,
+          canMigrate: Boolean(canMigrate),
+          deploymentId: receipt?.deploymentId ?? null,
+          removed: remove ?? [],
+        };
+      });
+    },
+
+    async recordBuildCacheReceipt(
+      projectId: string,
+      scope: string,
+      receipt: { targets: string[]; deploymentId: string; completedAt: string; durationMs?: number },
+    ) {
+      await withProjectConfigurationWrite(db, eq(project.id, projectId), async (tx) => {
+        const [row] = await tx.select().from(project).where(eq(project.id, projectId));
+        if (row)
+          await tx
+            .update(project)
+            .set({ buildCacheReceipts: { ...row.buildCacheReceipts, [scope]: receipt } })
+            .where(eq(project.id, projectId));
       });
     },
 

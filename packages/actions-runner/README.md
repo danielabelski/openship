@@ -30,7 +30,7 @@ reuse the binary release. Desktop, CLI and native release packaging fetch the pi
 for that fetch. The API Dockerfile copies the same files from that exact image
 digest. Installed products never fetch or compile a worker at startup.
 
-Developing changed worker source needs Node 22 and Go 1.26.4. A valid local build
+Developing changed worker source needs Node 22 and Go 1.26.9. A valid local build
 is reused first. A matching published pin is fetched when local assets are absent;
 a failed fetch fails the build instead of silently compiling. Unpublished source
 uses the declared Go toolchain. `OPENSHIP_ACTIONS_RUNNER_BUILD=1` explicitly permits

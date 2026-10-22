@@ -54,7 +54,10 @@ export function softwareImageCandidates(raw: string): Array<SoftwareImage & { re
   const normalize = (reference: string) =>
     reference.replace(/^(?:docker\.io\/|index\.docker\.io\/)/, "").replace(/^library\//, "");
   return [...references].flatMap((reference) => {
-    const entry = pack.images!.find((image) => normalize(image.image) === normalize(reference));
+    const [ref, pinnedDigest] = reference.split("@");
+    const entry = pack.images!.find((image) =>
+      normalize(image.image) === normalize(ref!) && (!pinnedDigest || pinnedDigest === image.sourceDigest),
+    );
     return entry ? [{ ...entry, reference }] : [];
   });
 }
@@ -101,9 +104,9 @@ export async function readSoftwareCache(
 ): Promise<{ args: string; unavailable: boolean }> {
   try {
     signal?.throwIfAborted();
-    const candidates = softwareImageCandidates(
-      await executor.exec(readSoftwareCacheCommand(dockerfile), { timeout: 5_000 }),
-    );
+    const raw = await executor.exec(readSoftwareCacheCommand(dockerfile), { timeout: 5_000 });
+    if (!raw.trim()) return { args: "", unavailable: true };
+    const candidates = softwareImageCandidates(raw);
     const args: string[] = [];
     for (const entry of candidates) {
       signal?.throwIfAborted();

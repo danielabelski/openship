@@ -1,3 +1,4 @@
+import { isCustomerServer } from "../billing/management.service";
 /**
  * Project CRUD service - create, read, update, list, ensure.
  */
@@ -40,6 +41,7 @@ import {
   resolveWorkload,
   resolveGitHubDeploymentChecks,
   toWorkloadType,
+  parseOpenshipConfig,
   type ReleaseSource,
   type UpdatableIdentity,
   type WorkloadType,
@@ -65,7 +67,7 @@ import {
   getWebhookStrategy,
   resolveWebhookStrategy,
 } from "../github/github.service";
-import { projectMatchesChanges } from "../github/webhook-changed-files";
+import { resolveProjectChangeImpact } from "../github/project-change-impact";
 import { getInstallationIdByOrg, resolveInstallUrl } from "../github/github.auth";
 import { hasActiveGitHubSource, resolveGitHubWebBaseUrl } from "../github/github-source.service";
 import { domainWebhookUrl } from "../../lib/public-url";
@@ -175,6 +177,7 @@ export { deploymentIsBlocked, deploymentRoutingUnsynced };
 // Same reason: the run→payload projection is an allowlist that must be readable and
 // testable without this file's graph. See the module doc for what it deliberately drops.
 import { readActiveMigration } from "./active-migration";
+import { loadProjectRuntimeHealth } from "./project-runtime-health";
 
 /**
  * Is a live migration even POSSIBLE for a project on this instance?
@@ -300,7 +303,9 @@ export async function enrichProject(p: Project) {
   // that renders a project — cards, sidebar, the page header, its own Advanced tab — already
   // reads this payload. Anywhere else would be a second thing to fetch and a second place
   // for the answer to disagree.
-  const activeMigration = await loadActiveMigration(p.id);
+  const [activeMigration, runtimeHealth] = await Promise.all([
+    loadActiveMigration(p.id), loadProjectRuntimeHealth([p]),
+  ]);
 
   return {
     ...p,
@@ -308,6 +313,7 @@ export async function enrichProject(p: Project) {
     serverId,
     serverName,
     activeMigration,
+    runtimeUnhealthy: (runtimeHealth.get(p.id)?.length ?? 0) > 0,
     ...readEnabled(p),
     ...readActiveDeploymentSummary(activeDep),
     resources: encodeResources(production, build, p.sleepMode ?? "auto_sleep", p.port ?? 3000, {
@@ -325,7 +331,8 @@ export async function enrichProject(p: Project) {
  *
  * Per-project query count: 0 (data is pre-fetched).
  * Total SQL cost: 1 (deployment.findManyById) + 1 (server.getMany) + 1
- * (dockerMigrationRun.findActiveForProjects, self-hosted only).
+ * (dockerMigrationRun.findActiveForProjects, self-hosted only) + 1
+ * (serviceIncident.listOpenForActiveProjects, self-hosted only).
  */
 export async function enrichProjectsBatch(
   projects: Project[],
@@ -356,7 +363,9 @@ export async function enrichProjectsBatch(
   // ONE statement for every project's live run, so the "Migrating" pill on a list of 50
   // projects costs a query rather than 50. The map is empty on cloud (no migrations there)
   // and on any failure — a lookup for a status pill must never fail a project list.
-  const activeMigrations = await loadActiveMigrations(projects.map((p) => p.id));
+  const [activeMigrations, runtimeHealth] = await Promise.all([
+    loadActiveMigrations(projects.map((p) => p.id)), loadProjectRuntimeHealth(projects),
+  ]);
 
   return projects.map((p) => {
     const production = p.resources as ResourceConfig | null;
@@ -379,6 +388,7 @@ export async function enrichProjectsBatch(
       serverId,
       serverName,
       activeMigration: readActiveMigration(activeMigrations.get(p.id)),
+      runtimeUnhealthy: (runtimeHealth.get(p.id)?.length ?? 0) > 0,
       ...readEnabled(p),
       ...readActiveDeploymentSummary(activeDep),
       resources: encodeResources(production, build, p.sleepMode ?? "auto_sleep", p.port ?? 3000, {
@@ -589,6 +599,23 @@ function normalizeComposePath(value: string | null | undefined): string | null {
   return value?.trim() ? value.trim() : null;
 }
 
+/**
+ * Roles enter through the same rules as `openship.json`'s `roles`: run the value
+ * through the config parser so a hand-built request cannot persist what a repo
+ * file could not declare. undefined = not sent (leave unchanged / create NULL),
+ * null and [] pass through as given. The parsed result is what gets stored, so
+ * it never carries the preset-only `when`/`unless` fields.
+ */
+function validateRoles(roles: unknown): TCreateProjectBody["roles"] {
+  if (roles === undefined || roles === null) return roles;
+  const { config, errors } = parseOpenshipConfig({ roles });
+  if (errors.length > 0) {
+    throw new ValidationError(`Invalid roles: ${errors.join("; ")}`);
+  }
+  // parseRoles rejects kind "web", so the result fits the wire shape.
+  return (config?.roles ?? []) as NonNullable<TCreateProjectBody["roles"]>;
+}
+
 function environmentNameFromSlug(slug: string) {
   return (
     slug
@@ -605,7 +632,7 @@ async function ensureProjectApp(data: ResolvedCreateProjectBody, slug: string, o
   return withProjectCreationLock(organizationId, async () => {
     let app = await repos.projectGroup.findBySlugInOrg(organizationId, slug);
     if (app) return { app, created: false };
-    await assertProjectQuota(organizationId, data.workspaceId ?? null);
+    await assertProjectQuota(organizationId, data.workspaceId ?? null, data.serverId);
 
     const source = resolveProjectSource(data);
 
@@ -730,6 +757,9 @@ function buildProductionProjectInput(
     // undefined (not declared) leaves the column NULL = no release phase, which
     // is what every project did before the phase existed.
     releaseCommands: data.releaseCommands ?? null,
+    // undefined (not declared) leaves the column NULL = web only, which is what
+    // every project was before roles existed.
+    roles: data.roles ?? null,
     buildImage: data.buildImage,
     runtimeVersion: data.runtimeVersion,
     runtimeImage: data.runtimeImage,
@@ -903,6 +933,9 @@ async function createProductionProject(
   // Reject incompatible runtime settings before any group/project insert.
   assertRuntimeVersionTarget(data);
   data = { ...data, ...runtimeProjectUpdate(null, data) };
+  // Same rules as openship.json; before any group/project insert.
+  const roles = validateRoles(data.roles);
+  if (roles !== undefined) data = { ...data, roles };
   // The project type is derived from persisted service rows. Accepting an
   // explicit monorepo without app metadata creates a different project from
   // the one requested (including CLI --type monorepo). Reject before writes.
@@ -925,7 +958,7 @@ async function createProductionProject(
   }
   // Workspace ownership is always derived from the selected server.
   data = { ...data, workspaceId: undefined };
-  if (env.CLOUD_MODE || selectedServer?.workspaceId) {
+  if ((env.CLOUD_MODE && !await isCustomerServer(organizationId, selectedServer?.id)) || selectedServer?.workspaceId) {
     const { workspace, server } = await resolveCloudProjectServer(organizationId, data.serverId);
     if (workspace) {
       if (!ctx) throw new AppError("Workspace placement requires an authenticated execution context", 403, "CLOUD_WORKSPACE_ACCESS_REQUIRED");
@@ -1447,8 +1480,8 @@ async function findProjectByAppSlug(
  * Exported for the project CLONE: a duplicate is a new project and must count like one, or
  * "duplicate" becomes the way around the cap.
  */
-export async function assertProjectQuota(organizationId: string, workspaceId?: string | null): Promise<void> {
-  if (!env.CLOUD_MODE) {
+export async function assertProjectQuota(organizationId: string, workspaceId?: string | null, serverId?: string | null): Promise<void> {
+  if (!env.CLOUD_MODE || await isCustomerServer(organizationId, serverId)) {
     const { total } = await repos.projectGroup.listByOrganization(organizationId, {
       page: 1,
       perPage: 1,
@@ -1536,6 +1569,7 @@ export async function ensureProject(data: EnsureProjectBody, organizationId: str
     if (data.composePath !== undefined) update.composePath = normalizeComposePath(data.composePath);
     if (data.startCommand !== undefined) update.startCommand = data.startCommand;
     if (data.releaseCommands !== undefined) update.releaseCommands = data.releaseCommands;
+    if (data.roles !== undefined) update.roles = validateRoles(data.roles);
     if (data.buildImage !== undefined) update.buildImage = data.buildImage;
     Object.assign(update, runtimeProjectUpdate(project, data));
     assertRuntimeVersionTarget({ ...project, ...data, ...update });
@@ -2133,6 +2167,7 @@ export async function createProjectEnvironment(
     composePath: base.composePath,
     startCommand: base.startCommand,
     releaseCommands: base.releaseCommands,
+    roles: base.roles,
     buildImage: base.buildImage,
     runtimeVersion: base.runtimeVersion,
     runtimeImage: base.runtimeImage,
@@ -2505,7 +2540,7 @@ export async function evaluateDrift(
     if (behind && ctx && root) {
       const compare = await compareCommits(ctx, p.gitOwner!, p.gitRepo!, deployedSha!, latestSha!);
       if (compare && !compare.truncated) {
-        behind = projectMatchesChanges(root, compare.files, p.monorepoSharedPaths);
+        behind = (await resolveProjectChangeImpact(ctx, p, compare.files, latestSha)).affected;
       }
     }
     const latestInProgress = Boolean(
@@ -2739,6 +2774,7 @@ export async function updateOptions(
     }
     update.releaseCommands = options.releaseCommands;
   }
+  if (options.roles !== undefined) update.roles = validateRoles(options.roles);
   if (options.productionPort !== undefined) update.port = options.productionPort;
   if (options.packageManager !== undefined) update.packageManager = options.packageManager;
   if (options.buildImage !== undefined) update.buildImage = options.buildImage;
