@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # One file-only artifact holds Linux/macOS workers for both CPU architectures.
 # This stage never executes, including when the API is built for ARM64.
-ARG ACTIONS_RUNNER_IMAGE=ghcr.io/oblien/openship-actions-runner@sha256:2d7d5857f2a05831275c806e4e12842a74b8f41ba004ed7f7211213a55735632
+ARG ACTIONS_RUNNER_IMAGE=ghcr.io/oblien/openship-actions-runner@sha256:ec49c4e1bea777d593a0cf7a2a6ff65b540a13fa8914f1f95c4f291a1db3af33
 ARG ACTIONS_RUNNER_PLATFORM=linux/amd64
 FROM --platform=${ACTIONS_RUNNER_PLATFORM} ${ACTIONS_RUNNER_IMAGE} AS actions-runner
 
