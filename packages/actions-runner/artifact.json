@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
   "source": "3a6d44a4e0f7eecd24b366af1e1b13b119756fa8781ca1a9c752d361e89697f8",
-  "image": "ghcr.io/oblien/openship-actions-runner@sha256:ec49c4e1bea777d593a0cf7a2a6ff65b540a13fa8914f1f95c4f291a1db3af33"
+  "image": "ghcr.io/oblien/openship-actions-runner@sha256:bf87b9c1390b70b5df68c8556fe1b09bf9fa3b5f48510b8e941881b1eadeea96"
 }
