@@ -190,6 +190,8 @@ export async function pruneManagedBuildCaches(
   executor: CommandExecutor,
   options: {
     keepBytes?: number;
+    /** Maintenance sweeps can spend longer measuring than build admission. */
+    measurementTimeoutMs?: number;
     projectId?: string;
     now?: number;
     protectedProjectIds?: ReadonlySet<string>;
@@ -223,7 +225,7 @@ export async function pruneManagedBuildCaches(
       let raw: string;
       try {
         raw = await executor.exec(`du -sk -- ${sq(volume.Mountpoint)}`, {
-          timeout: options.projectId || requestedKeepBytes === 0 ? 120_000 : 15_000,
+          timeout: options.projectId || requestedKeepBytes === 0 ? 120_000 : (options.measurementTimeoutMs ?? 15_000),
         });
       } catch (error) {
         // Accounting is optional during automatic retention. A large idle cache
