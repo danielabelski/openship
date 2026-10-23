@@ -378,8 +378,20 @@ function AddServiceForm({
       .map(({ entry }) => entry);
   }, [bucketed, searchQuery, activeCategory]);
 
-  const handlePick = (entry: ImageCatalogEntry) => {
+  const handlePick = (entry: ImageCatalogEntry, resetDraft = false) => {
+    if (!resetDraft && entry.id === selected?.id) {
+      setStep("configure");
+      return;
+    }
     setSelected(entry);
+    // A different service/source starts a new draft, including public exposure.
+    setExposed(false);
+    setExposedPort("");
+    setDomain("");
+    setCustomDomain("");
+    setDomainType(newEndpointDomainType);
+    setBuildContext(".");
+    setDockerfile("Dockerfile");
     // Seed configure step from catalog defaults. Custom image gets blank fields.
     if (isCustom(entry)) {
       setName("");
@@ -588,7 +600,7 @@ function AddServiceForm({
               onClick={() => {
                 if (sourceMode === item.id) return;
                 setSourceMode(item.id);
-                handlePick(CUSTOM_ENTRY);
+                handlePick(CUSTOM_ENTRY, true);
                 if (item.id === "catalog" || item.id === "existing") setStep("pick");
               }}
               className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${sourceMode === item.id ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"}`}

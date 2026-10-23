@@ -8,6 +8,7 @@ import { AddServiceModal } from "./AddServiceModal";
 import { getAppTemplate } from "@repo/core";
 import { setApiResourceScope } from "@/lib/api/client";
 import type { ServiceRepositorySource } from "./repository-source";
+import type { RoutingSettingsCardProps } from "@/components/routing/RoutingSettingsCard";
 
 const h = vi.hoisted(() => ({
   mode: "cloud",
@@ -24,7 +25,22 @@ vi.mock("@/components/ui/Modal", () => ({
     isOpen ? children : null,
 }));
 vi.mock("../UseInProjectModal", () => ({ ProjectConnectionForm: () => null }));
-vi.mock("@/components/routing/RoutingSettingsCard", () => ({ RoutingSettingsCard: () => null }));
+vi.mock("@/components/routing/RoutingSettingsCard", () => ({
+  RoutingSettingsCard: (props: RoutingSettingsCardProps) => (
+    <button
+      type="button"
+      onClick={() => {
+        props.onExposedChange?.(true);
+        props.onExposedPortChange?.("9001");
+        props.onDomainTypeChange("custom");
+        props.onCustomDomainChange("storage.example.test");
+        props.onDomainChange("storage");
+      }}
+    >
+      Configure public route
+    </button>
+  ),
+}));
 
 let host: HTMLDivElement;
 let root: Root;
@@ -458,6 +474,62 @@ it("never carries catalog secrets, argv, or GPU requests into repository builds"
   });
   expect(h.submit.mock.calls[0][0]).not.toHaveProperty("commandArgv");
   expect(h.submit.mock.calls[0][0]).not.toHaveProperty("advanced");
+});
+it.each(["catalog", "repository", "image"])(
+  "does not carry public routing to a different %s service",
+  async (source) => {
+    await render(false, true, repository);
+    await pick(getAppTemplate("minio")!.services![0]!.image!);
+    await pick("Configure public route");
+    if (source === "catalog") {
+      await act(async () =>
+        host.querySelector<HTMLButtonElement>(`[aria-label="${copy.backToCatalog}"]`)!.click(),
+      );
+      await pick("redis:7-alpine");
+    } else {
+      await pick(source === "repository" ? copy.repositorySource.title : copy.customImage);
+      await edit(source === "repository" ? "api" : "postgres", "backend");
+      if (source === "image") await edit("postgres:16-alpine", "example/api:v1");
+    }
+    await act(async () => {
+      submit();
+    });
+    expect(h.submit).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        exposed: false,
+        exposedPort: undefined,
+        domain: undefined,
+        customDomain: undefined,
+        domainType: "free",
+      }),
+    );
+  },
+);
+it("preserves edited fields and generated credentials when returning to the same catalog item", async () => {
+  await render();
+  await pick("postgres:16-alpine");
+  const password = envRow("POSTGRES_PASSWORD").value.value;
+  await edit("postgres", "orders");
+  await edit("5432", "5433");
+  await pick("Configure public route");
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>(`[aria-label="${copy.backToCatalog}"]`)!.click(),
+  );
+  await pick("postgres:16-alpine");
+  await act(async () => {
+    submit();
+  });
+  expect(h.submit).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      name: "orders",
+      ports: ["5433"],
+      environment: expect.objectContaining({ POSTGRES_PASSWORD: password }),
+      exposed: true,
+      exposedPort: "9001",
+      customDomain: "storage.example.test",
+      domainType: "custom",
+    }),
+  );
 });
 it("discards the source draft when the project repository changes", async () => {
   await render(false, true, repository);
