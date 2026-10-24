@@ -1935,14 +1935,10 @@ function buildDeployEnvironment(
             // deploys and runs on its port; routing is flagged action-required
             // and retried later (route registration below is also best-effort).
             try {
-              if (plannedDomains.length > 0 || deps.prepareHostPorts) {
+              if (plannedDomains.length > 0) {
                 // Routing needs OpenResty on 80/443. If a foreign proxy already
                 // holds them, HOLD the deploy and prompt (migrate / take over /
                 // cancel) — the same session prompt flow used for port conflicts.
-                // A private loopback deployment also needs the managed edge's
-                // authoritative inventory before reserving a host port. Prepare
-                // it on a fresh server rather than treating missing inventory as
-                // empty or failing the first private deployment.
                 const edge = await ensureEdge(
                   targetExecutor,
                   (p) =>
