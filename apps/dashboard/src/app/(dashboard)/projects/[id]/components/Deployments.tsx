@@ -19,6 +19,7 @@ import WarningCallout from "@/components/shared/WarningCallout";
 import { useRuntimeUpdate } from "@/hooks/useRuntimeUpdate";
 import { RuntimeRedeployMenu } from "@/components/project-settings/RuntimeRedeployMenu";
 import { RuntimeImageUpdateNotice } from "@/components/project-settings/RuntimeImageUpdateNotice";
+import { RuntimeSecurityNotice } from "@/components/project-settings/RuntimeSecurityNotice";
 import {
   hasConnectedDomain,
   isPotentiallyPublicService,
@@ -359,6 +360,8 @@ export const Deployments = () => {
           }
         />
       )}
+
+      {!isSelfApp && <RuntimeSecurityNotice projectId={id} revision={projectData?.activeDeploymentId} workspaceId={projectData?.workspaceId} />}
 
       {!isSelfApp && <RuntimeImageUpdateNotice result={runtimeUpdate.checkResult}
         busy={isRedeploying || runtimeUpdate.updating} onRefresh={runtimeUpdate.update} />}

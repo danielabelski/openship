@@ -14,6 +14,26 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("rollback preview uses the effective Compose environment", () => {
+  it("compares a captured service secret only with that service", async () => {
+    const { organizationId } = await seedOrg();
+    const project = await seedProject(organizationId, { framework: "docker-compose" });
+    const api = await seedService(project.id, { name: "api", environment: { TOKEN: "new-api-secret" } });
+    await seedService(project.id, { name: "worker", environment: { TOKEN: "worker-secret" } });
+    const target = await seedDeployment(project, {
+      commitSha: "a".repeat(40),
+      envVars: {},
+      meta: {
+        serviceDeploymentMode: "services", composeServices: [{ name: "api" }, { name: "worker" }],
+        serviceEnvVars: { [api.id]: { TOKEN: encrypt("frozen-api-secret") } },
+      },
+    });
+    const preview = await previewRestore(target.id, organizationId);
+    expect(preview.env?.changes).toEqual([
+      { key: "TOKEN", direction: "frozen-wins", serviceName: "api" },
+      { key: "TOKEN", direction: "added-since", serviceName: "worker" },
+    ]);
+    expect(JSON.stringify(preview)).not.toMatch(/frozen-api-secret|worker-secret|new-api-secret/);
+  });
   it.each([
     { name: "an unchanged passthrough", inline: "${TOKEN}", templateKeys: ["TOKEN"], changes: [] },
     { name: "a legacy empty passthrough", inline: "", templateKeys: undefined, changes: [] },

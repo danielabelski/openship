@@ -3,19 +3,14 @@
 /**
  * Update + advisory state for the dashboard (desktop AND self-hosted).
  *
- * Everything is PULLED from the public GitHub repo — the latest release + an
- * advisory manifest pinned to that release's tag (so unreleased commits to main
- * never reach clients). Nothing is pushed to the app. Pure resolution lives in
- * @repo/core; this hook only does I/O + persistence.
+ * The backend caches tagged releases and the separately signed security feed.
+ * Nothing in either feed executes remote instructions. Pure resolution lives
+ * in @repo/core; this hook only does I/O + preference persistence.
  */
 
-import { observedAllSettled, reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
-  RELEASES_LATEST_API,
-  advisoryManifestUrl,
-  changelogMarkdownUrl,
-  extractChangelogSection,
   parseManifest,
   resolveUpdateState,
   matchAdvisories,
@@ -27,6 +22,7 @@ import {
   type UpdateState,
 } from "@repo/core";
 import { useDeploymentInfo } from "@/hooks/useDeploymentInfo";
+import { updatesApi } from "@/lib/api/updates";
 import { getRestApiBaseUrl } from "@/lib/api/urls";
 
 const LS_MUTED = "openship_update_muted";
@@ -105,67 +101,31 @@ async function persistLastSeen(version: string): Promise<void> {
   else localStorage.setItem(LS_LAST_SEEN, version);
 }
 
-// Session-scoped cache: fetch GitHub once per app session (GitHub rate-limits
-// unauthenticated calls to 60/hr/IP; navigation shouldn't re-hit it).
+// Coalesce dashboard consumers. The backend owns the GitHub cache and cadence.
 let remoteCache: Promise<ReleaseFeedSnapshot> | null = null;
+let remoteCheckedAt = 0;
 let remoteInFlight: Promise<ReleaseFeedSnapshot> | null = null;
-
-/** One uncached update read. Exported so the three-source failure isolation is testable. */
-export async function fetchRemoteUncached(
-  fetcher: typeof fetch = fetch,
-): Promise<{ latest: LatestRelease | null; manifest: AdvisoryManifest | null }> {
-  let latest: LatestRelease | null = null;
-  let manifest: AdvisoryManifest | null = null;
-  try {
-    const res = await fetcher(RELEASES_LATEST_API, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { tag_name?: string };
-      const tag = data.tag_name ?? "";
-      if (tag) {
-        latest = { version: tag.replace(/^v/, ""), tag, notes: "" };
-        // Both documents are pinned to the release tag. Fetch independently:
-        // a missing changelog must not hide a critical advisory, and a missing
-        // advisory must not erase the release notes.
-        const [changelogResult, manifestResult] = await observedAllSettled([
-          fetcher(changelogMarkdownUrl(tag)),
-          fetcher(advisoryManifestUrl(tag), { headers: { Accept: "application/json" } }),
-        ], "dashboard/components/updates/useUpdates");
-        if (changelogResult.status === "fulfilled" && changelogResult.value.ok) {
-          try {
-            latest.notes = extractChangelogSection(await changelogResult.value.text(), latest.version);
-          } catch (diagnosticFailure) {
-            observeCaughtError(diagnosticFailure, "dashboard/components/updates/useUpdates");
-            /* malformed/unreadable changelog → keep notes empty */
-          }
-        }
-        if (manifestResult.status === "fulfilled" && manifestResult.value.ok) {
-          try {
-            manifest = parseManifest(await manifestResult.value.json());
-          } catch (diagnosticFailure) {
-            observeCaughtError(diagnosticFailure, "dashboard/components/updates/useUpdates");
-            /* malformed/unreadable manifest → no advisories */
-          }
-        }
-      }
-    }
-  } catch (diagnosticFailure) {
-    observeCaughtError(diagnosticFailure, "dashboard/components/updates/useUpdates");
-    /* offline / rate-limited → no update info */
-  }
-  return { latest, manifest };
-}
 
 function fetchRemote(force = false): Promise<ReleaseFeedSnapshot> {
   if (remoteInFlight) return remoteInFlight;
-  if (!force && remoteCache) return remoteCache;
-  // The native process owns desktop release I/O, including the launch check.
-  // Preserve notes and advisories even when its platform has no installer.
-  const check = isDesktop() ? window.desktop?.updates?.check : undefined;
-  const request: Promise<ReleaseFeedSnapshot> = check
-    ? check(force).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/components/updates/useUpdates"); return ({ latest: null, manifest: null }); })
-    : fetchRemoteUncached();
+  if (!force && remoteCache && Date.now() - remoteCheckedAt < 5 * 60_000) return remoteCache;
+  // The backend coalesces browsers, tenants and scheduler ticks, keeps credentials
+  // server-side, and enforces the GitHub cadence even for manual refreshes.
+  const previous = remoteCache;
+  const request: Promise<ReleaseFeedSnapshot> = updatesApi.advisories().then(({ data }) => {
+    remoteCheckedAt = Date.now();
+    const securityAdvisories = (data.security?.advisories ?? []).flatMap((notice) =>
+      notice.targets.filter((target) => target.kind === "platform").map((target) => ({
+        id: `security:${notice.id}:${notice.revision}`, title: notice.title, message: notice.message,
+        severity: notice.severity === "critical" || notice.severity === "high" ? "critical" as const : "recommended" as const,
+        announce: true, affects: target.affected,
+        action: { kind: "open-url" as const, label: "Read advisory", url: notice.url },
+      })));
+    return { ...data.release, manifest: { advisories: [...(data.release.manifest?.advisories ?? []), ...securityAdvisories] } };
+  }).catch((error) => {
+    observeCaughtError(error, "dashboard/components/updates/useUpdates");
+    return previous ?? { latest: null, manifest: null };
+  });
   remoteInFlight = request.finally(() => { remoteInFlight = null; });
   remoteCache = remoteInFlight;
   return remoteInFlight;
@@ -223,7 +183,7 @@ export interface UseUpdates {
   /** Error message when `updatePhase === "error"`. */
   updateError: string | null;
   reload: () => void;
-  /** Force a fresh GitHub check, bypassing the session cache. */
+  /** Refresh from the backend, preserving its GitHub cadence and backoff. */
   refresh: () => void;
 }
 
@@ -259,9 +219,9 @@ export function useUpdates(): UseUpdates {
     const desktopOrSelfHosted = isDesktop() || deployInfo?.selfHosted === true;
     if (!desktopOrSelfHosted) {
       if (!deployInfo) return; // deploy info still loading — not yet known to be cloud
-      const [prefs, manifest] = await Promise.all([getPrefs(), fetchNotices()]);
+      const [prefs, notices] = await Promise.all([getPrefs(), fetchNotices()]);
       setMutedState(prefs.muted);
-      const advisories = matchAdvisories(deployInfo.version ?? "", manifest, mode)
+      const advisories = matchAdvisories(deployInfo.version ?? "", notices, mode)
         .filter((a) => a.severity === "critical" || (!prefs.muted && !prefs.dismissed.includes(a.id)))
         .sort((x, y) => (SEVERITY_RANK[x.severity] ?? 9) - (SEVERITY_RANK[y.severity] ?? 9));
       setState({
@@ -321,6 +281,8 @@ export function useUpdates(): UseUpdates {
 
   useEffect(() => {
     void load();
+    const timer = setInterval(() => { if (document.visibilityState !== "hidden") void load(); }, 5 * 60_000);
+    return () => clearInterval(timer);
   }, [load]);
 
   const dismissAdvisory = useCallback(
@@ -390,7 +352,7 @@ export function useUpdates(): UseUpdates {
     setUpdateError(null);
     setUpdateProgress(0);
     setUpdatePhase("downloading");
-    void Promise.resolve(u.start())
+    void Promise.resolve(u.check?.(true)).then(() => u.start())
       .then((ok) => {
         if (ok === false) {
           setUpdatePhase("idle");
@@ -400,8 +362,8 @@ export function useUpdates(): UseUpdates {
       .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/components/updates/useUpdates"); return setUpdatePhase("idle"); });
   }, []);
 
-  // Refresh the same snapshot that drives both the dashboard and native install.
-  // Concurrent consumers join the request instead of issuing duplicate checks.
+  // Concurrent consumers join the backend read. The native installer separately
+  // verifies the matching release artifact before installing it.
   const refresh = useCallback(() => {
     void fetchRemote(true);
     void load();

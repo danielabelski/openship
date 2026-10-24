@@ -338,6 +338,13 @@ describe("maskScanService", () => {
 });
 
 describe("maskDeploymentEnv", () => {
+  test("omits private service captures without modifying rollback material", () => {
+    const captured = { api: { TOKEN: "encrypted-value" } };
+    const stored = { meta: { serviceEnvVars: captured, composeServices: [] } };
+    expect(maskDeploymentEnv(stored).meta).not.toHaveProperty("serviceEnvVars");
+    expect(stored.meta.serviceEnvVars).toBe(captured);
+    expect(maskDeploymentEnv({ meta: { serviceEnvVars: captured } }).meta).toEqual({});
+  });
   test("masks meta.composeServices[].environment, leaves other meta fields", () => {
     const dep = {
       id: "dep_1",

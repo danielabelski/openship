@@ -610,7 +610,9 @@ export async function buildComposeImages(opts: {
       const pinned = pinnedImageForService(opts.snapshot, service.name);
       if (!pinned) continue;
       imageRefs.set(service.id, pinned);
-      preparedLocalImages.set(service.id, pinned);
+      // A signed patch pins a NEW registry artifact. Unlike rollback/migration,
+      // it must be acquired before cutover, not required to exist in local cache.
+      if (!opts.snapshot.runtimeSecurityRefresh) preparedLocalImages.set(service.id, pinned);
       if (pinned.startsWith("/") && staticServiceIds.has(service.id)) {
         staticArtifactRefs.set(service.id, pinned);
       }

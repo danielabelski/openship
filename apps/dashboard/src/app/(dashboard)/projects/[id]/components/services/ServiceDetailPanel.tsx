@@ -46,6 +46,7 @@ import { configuredServiceEndpoints } from "@/lib/service-endpoints";
 import { useRuntimeUpdate } from "@/hooks/useRuntimeUpdate";
 import { useRuntimeRedeployActions } from "@/components/project-settings/RuntimeRedeployMenu";
 import { RuntimeImageUpdateNotice } from "@/components/project-settings/RuntimeImageUpdateNotice";
+import { RuntimeSecurityNotice } from "@/components/project-settings/RuntimeSecurityNotice";
 
 type ServiceTab = "overview" | "terminal" | "logs" | "env" | "domains" | "volumes" | "settings" | "backup";
 const SERVICE_TAB_DEFS: TabDef<ServiceTab>[] = [
@@ -667,6 +668,7 @@ export function ServiceDetailPanel({
       </div>
 
       {/* ── Tab strip ──────────────────────────────────────────── */}
+      <RuntimeSecurityNotice projectId={projectId} serviceId={service.id} revision={activeDeploymentId} workspaceId={workspaceId} />
       <RuntimeImageUpdateNotice result={runtimeUpdate.checkResult} busy={serviceOperationBusy} onRefresh={runtimeUpdate.update} />
       <Tabs
         className="border-b-0"

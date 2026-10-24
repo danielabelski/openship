@@ -70,7 +70,7 @@ import { decryptEnvMap, encrypt } from "../../lib/encryption";
 import { getCommitByRef, getLatestCommit, getRepository } from "../github/github.service";
 import { assertGitHubRepoAccess } from "../github/github-access";
 import { resolveSmartRoute } from "./smart-route";
-import { snapshotNeedsGitSource, snapshotNeedsProjectSource, withoutPinnedArtifacts, strictRefreshImages } from "./pinned-artifacts";
+import { snapshotNeedsGitSource, snapshotNeedsProjectSource, withoutPinnedArtifacts, strictRefreshImages, type RuntimeSecurityRefresh } from "./pinned-artifacts";
 import { deploymentWorkload, projectToClass, snapshotToClass } from "./deployment-class";
 import { needsRunningApplication } from "./build-execution-plan";
 import {
@@ -216,6 +216,8 @@ export async function runDeploymentPreflight(
 
 /** Config snapshot stored in deployment.meta - self-contained build+deploy config. */
 export interface DeploymentConfigSnapshot {
+  /** Internal signed image refresh: replay configuration, replace only verified images. */
+  runtimeSecurityRefresh?: RuntimeSecurityRefresh;
   /** Worker-authored completed-image receipt and one-shot retry provenance. */
   completedBuildArtifacts?: import("./deployment-artifacts").DeploymentArtifacts;
   retryBuildFromDeploymentId?: string;
@@ -414,6 +416,10 @@ export interface DeploymentConfigSnapshot {
    * capture can be told apart without guessing.
    */
   envCapture?: "flat-v1";
+  /** Complete managed environment captured for individual services, encrypted
+   * with the same codec as envVars. Scoped values never enter the project map.
+   * Retained on rollback; absent services keep the existing layered behavior. */
+  serviceEnvVars?: Record<string, Record<string, string>>;
   /**
    * Smart per-service target list. When set, only these service ids
    * are (re)built; others are recorded as `service_deployment` rows
@@ -2724,6 +2730,8 @@ export interface DeploymentTriggerInput {
     refresh?: boolean;
     /** Internal reviewed resource edit, never accepted from an HTTP deployment body. */
     resourceChanges?: DeploymentResourceChanges;
+    /** Internal consent-bound instruction; never accepted from public deployment inputs. */
+    securityRefresh?: DeploymentConfigSnapshot["runtimeSecurityRefresh"];
     /**
      * Release/dist source: deploy THIS specific version (the `release` webhook
      * passes the published tag). Omitted for a manual redeploy, which re-resolves
@@ -2949,6 +2957,10 @@ async function triggerDeploymentNow(ctx: RequestContext, data: DeploymentTrigger
   // must not inherit its force-pull behavior.
   if (data.forcePullImages) snapshot.forcePullImages = true;
   else delete snapshot.forcePullImages;
+  // Consent belongs to this admission. A later rollback must replay its artifact
+  // without inheriting an earlier automatic update's source/consent checks.
+  if (data.securityRefresh) snapshot.runtimeSecurityRefresh = data.securityRefresh;
+  else delete snapshot.runtimeSecurityRefresh;
   const routeState = await resolveProjectRouteState(project);
 
   // Resolve the snapshot's target (deployTarget + serverId + runtimeMode) from

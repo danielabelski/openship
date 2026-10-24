@@ -13,7 +13,9 @@ const snapshot = {
   latest: { tag: "v99.0.0", version: "99.0.0", notes: "Product notes." },
   manifest: { advisories: [] },
 };
-const check = vi.fn();
+const feed = vi.hoisted(() => ({ check: vi.fn(), security: null as unknown }));
+const check = feed.check;
+vi.mock("@/lib/api/updates", () => ({ updatesApi: { advisories: () => feed.check().then((release: unknown) => ({ data: { release, security: feed.security, stale: false } })) } }));
 const fetcher = vi.fn();
 const persist = vi.fn();
 const critical = {
@@ -56,6 +58,7 @@ beforeEach(async () => {
     return new Response(JSON.stringify({ advisories: [] }));
   });
   check.mockReset().mockResolvedValue({ available: false, ...snapshot });
+  feed.security = null;
   persist.mockReset().mockResolvedValue(true);
   window.desktop = {
     isDesktop: true,
@@ -130,6 +133,7 @@ describe("advisory dismissal within an app session", () => {
     // Every consumer receives its own readable response body.
     fetcher.mockImplementation(async () => new Response(JSON.stringify({ advisories: [critical] })));
     await mount();
+    expect(check).not.toHaveBeenCalled();
     expect(state[0].state?.advisories).toEqual([critical]);
     await act(async () => state[0].dismissAdvisory(critical.id));
     await act(async () => state[1].reload());
@@ -158,7 +162,28 @@ afterEach(async () => {
 });
 
 describe("release check requests (#661)", () => {
-  it("uses one native snapshot for multiple desktop consumers without a renderer GitHub fetch", async () => {
+  it.each(["desktop", "selfhosted", "cloud"])("scopes signed control-plane advisories correctly in %s", async (mode) => {
+    if (mode !== "desktop") delete window.desktop;
+    deployment.selfHosted = mode !== "cloud";
+    feed.security = { advisories: [{
+      id: "control-plane-patch", revision: 1, title: "Update Openship",
+      message: "Install the patched control plane.", severity: "high",
+      url: "https://example.com/security", targets: [{ kind: "platform", affected: ">=0.0.0" }],
+    }] };
+    await mount();
+    if (mode === "cloud") {
+      expect(check).not.toHaveBeenCalled();
+      expect(state[0].state?.updateAvailable).toBe(false);
+      expect(state[0].state?.advisories).toEqual([]);
+    } else {
+      expect(check).toHaveBeenCalledOnce();
+      expect(state[0].state?.advisories).toEqual([
+        expect.objectContaining({ id: "security:control-plane-patch:1" }),
+      ]);
+    }
+  });
+
+  it("uses one backend snapshot for multiple desktop consumers without a renderer GitHub fetch", async () => {
     await mount();
     expect(check).toHaveBeenCalledOnce();
     expect(releaseRequests()).toHaveLength(0);
@@ -166,7 +191,7 @@ describe("release check requests (#661)", () => {
     expect(state[1].latest).toEqual(snapshot.latest);
   });
 
-  it("refreshes through one native check and uses that result", async () => {
+  it("refreshes through the shared backend check and uses that result", async () => {
     await mount();
     check.mockResolvedValueOnce({
       available: false,
@@ -178,7 +203,7 @@ describe("release check requests (#661)", () => {
       state[1].refresh();
     });
     expect(check).toHaveBeenCalledTimes(2);
-    expect(check).toHaveBeenLastCalledWith(true);
+    expect(check).toHaveBeenLastCalledWith();
     expect(releaseRequests()).toHaveLength(0);
     expect(state[0].latest?.version).toBe("100.0.0");
   });
@@ -186,11 +211,13 @@ describe("release check requests (#661)", () => {
   it("also coalesces overlapping manual refreshes in the web dashboard", async () => {
     delete window.desktop;
     await mount();
-    expect(releaseRequests()).toHaveLength(3);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(releaseRequests()).toHaveLength(0);
     await act(async () => {
       state[0].refresh();
       state[1].refresh();
     });
-    expect(releaseRequests()).toHaveLength(6);
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(releaseRequests()).toHaveLength(0);
   });
 });

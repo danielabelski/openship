@@ -1,0 +1,45 @@
+{
+  "fixture": true,
+  "noRealApiWrites": true,
+  "checks": [
+    "notice expands",
+    "auto refresh off by default",
+    "desktop and mobile",
+    "manual evidence check without deployment",
+    "explicit consent",
+    "exact apply scope",
+    "changed deployment error",
+    "stale feed blocks refresh"
+  ],
+  "errors": [],
+  "writes": [
+    {
+      "method": "POST",
+      "path": "/api/updates/security-preview/security/check",
+      "body": null
+    },
+    {
+      "method": "PUT",
+      "path": "/api/updates/security-preview/security/policy",
+      "body": {
+        "autoRefresh": true
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/updates/security-preview/security/policy",
+      "body": {
+        "autoRefresh": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/security-preview/security/apply",
+      "body": {
+        "advisoryId": "CVE-2026-111497-node",
+        "deploymentId": "deployed-preview",
+        "serviceId": "api-preview"
+      }
+    }
+  ]
+}

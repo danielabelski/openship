@@ -14,6 +14,7 @@ import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics"
 import { findActiveDeployment, findProjectDeployment } from "@repo/platform/engine/lib/active-deployment";
 import { repos, type Deployment, type Domain, type Project, type Service } from "@repo/db";
 import { deploymentForcesImagePull, deploymentImagePullPolicy, isMutableImageRef } from "../image-pull-policy";
+import type { DeploymentConfigSnapshot } from "../build.service";
 import { assertCloudDeploymentLimits } from "../../../lib/plan-guard";
 import { resolveInheritedResources, resolveRuntimeResources } from "../../../lib/resources";
 import { posix as pathPosix } from "node:path";
@@ -1121,6 +1122,13 @@ async function deployComposeServicesCore(
   }
 
   const services = await repos.service.listByProject(project.id);
+  // Verify the exact rows this invocation will use. Later edits cannot change
+  // this in-memory configuration or its scoped, frozen environment.
+  const securitySnapshot = dep.meta as DeploymentConfigSnapshot | null;
+  if (securitySnapshot?.runtimeSecurityRefresh) {
+    const { assertSecurityRefreshConfiguration } = await import("../../updates/security-refresh-guard");
+    await assertSecurityRefreshConfiguration(await repos.project.findById(project.id), securitySnapshot, services);
+  }
   // Re-check at the last orchestration boundary before image acquisition and
   // cutover. This catches service changes that raced the queued worker.
   if (opts?.strictScope && opts.targetServiceIds) {

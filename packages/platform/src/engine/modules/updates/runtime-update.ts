@@ -3,6 +3,7 @@ import {
   isReleaseProvider,
   releaseArtifactKind,
   ValidationError,
+  securityImageIdentity,
   type ComposeAdvanced,
 } from "@repo/core";
 import type { CreateDeploymentResult, UpdateRuntimeInput } from "@repo/contracts";
@@ -24,6 +25,8 @@ import { assertExactServiceTargets } from "../deployments/exact-service-targets"
 import { isMutableImageRef } from "../deployments/image-pull-policy";
 import { snapshotNeedsProjectSource } from "../deployments/pinned-artifacts";
 import { projectServicesToDeployableServices } from "../deployments/compose/project-services";
+import { assertSecurityRefreshConfiguration } from "./security-refresh-guard";
+import { encrypt } from "../../lib/encryption";
 
 const hasMutableImage = (...refs: (string | null | undefined)[]) =>
   refs.some((ref) => !!ref && isMutableImageRef(ref));
@@ -33,12 +36,14 @@ export async function updateProjectRuntime(
   ctx: ExecutionContext,
   projectId: string,
   input: UpdateRuntimeInput = {},
+  verified?: { deploymentId: string; images: Record<string, string>; expiresAt: string },
 ): Promise<CreateDeploymentResult> {
   const project = await repos.project.findById(projectId);
   assertResourceInOrg(project, "Project", ctx.organizationId, projectId);
   assertNotControlPlane(project);
   const active = await findActiveDeployment(project);
   if (!active) throw new ValidationError("Deploy this project before updating its runtime.");
+  if (verified && active.id !== verified.deploymentId) throw new ValidationError("The active deployment changed. Check the advisory again.");
   const meta = (active.meta ?? {}) as Partial<DeploymentConfigSnapshot>;
 
   const services = await repos.service.listByProject(projectId);
@@ -181,6 +186,16 @@ export async function updateProjectRuntime(
       "Runtime updates require a retained container release version. Use Update or Redeploy for archive releases.",
     );
   }
+  const frozen = verified ? verifiedRuntimeSnapshot(active, selected, input, verified, ctx.userId) : undefined;
+  if (frozen) {
+    const environment = await assertSecurityRefreshConfiguration(project, frozen.meta);
+    frozen.meta.serviceEnvVars = {
+      ...frozen.meta.serviceEnvVars,
+      [input.serviceIds![0]!]: Object.fromEntries(
+        Object.entries(environment!).map(([key, value]) => [key, encrypt(value)]),
+      ),
+    };
+  }
   const result = await triggerDeployment(ctx, {
     projectId,
     environment: active.environment,
@@ -190,6 +205,7 @@ export async function updateProjectRuntime(
     ...(isReleaseProvider(project.gitProvider) && { releaseVersion }),
     trigger: "update",
     forcePullImages: true,
+    ...(frozen && { reuseSnapshot: frozen, securityRefresh: frozen.meta.runtimeSecurityRefresh }),
     ...(input.serviceIds
       ? { serviceIds: input.serviceIds, strictServiceScope: true }
       : { forceAll: true }),
@@ -206,4 +222,35 @@ export async function updateProjectRuntime(
         deployment_id: result.deployment.id,
         ...(result.skipped !== undefined && { skipped: result.skipped }),
       };
+}
+
+/** Internal-only, signed image refresh. Keeps the deployed config/env and pins this run's artifacts. */
+function verifiedRuntimeSnapshot(
+  active: NonNullable<Awaited<ReturnType<typeof findActiveDeployment>>>,
+  selected: Awaited<ReturnType<typeof repos.service.listByProject>>,
+  input: UpdateRuntimeInput,
+  verified: { deploymentId: string; images: Record<string, string>; expiresAt: string },
+  approvedBy: string,
+) {
+  const meta = structuredClone(active.meta) as DeploymentConfigSnapshot;
+  if (!input.serviceIds?.length || !meta?.composeServices?.length ||
+      Object.keys(verified.images).length !== selected.length) throw new ValidationError("Automatic refresh requires an exact image-service scope.");
+  const handoverImages: Record<string, string> = {};
+  for (const service of selected) {
+    const frozen = meta.composeServices.find((item) => item.name === service.name);
+    const image = verified.images[service.id];
+    if (!service.image || !isMutableImageRef(service.image) || service.build || service.dockerfile ||
+        (service.advanced as ComposeAdvanced | null)?.build || frozen?.image !== service.image ||
+        frozen.build || !image || !/@sha256:[a-f0-9]{64}$/.test(image) ||
+        securityImageIdentity(image)?.repository !== securityImageIdentity(service.image)?.repository) throw new ValidationError("This image requires manual review before updating.");
+    handoverImages[service.name] = image;
+  }
+  meta.handoverImages = handoverImages;
+  meta.runtimeSecurityRefresh = { deploymentId: active.id, approvedBy, expiresAt: verified.expiresAt };
+  meta.targetServiceIds = input.serviceIds;
+  delete meta.completedBuildArtifacts;
+  delete meta.retryBuildFromDeploymentId;
+  delete meta.refreshServiceIds;
+  delete meta.refreshAppDeploymentId;
+  return { meta, envVars: active.envVars as Record<string, string> | null };
 }

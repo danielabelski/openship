@@ -1059,6 +1059,8 @@ async function executeBuildAndDeploy(
     );
     if (snapshot.roleConfiguration && failedEnvKeys.length)
       throw new Error("The active environment could not be decrypted. Re-enter the affected variables before applying role settings.");
+    if (snapshot.runtimeSecurityRefresh && failedEnvKeys.length)
+      throw new Error("The security refresh environment could not be decrypted. Review the service before updating.");
     // Surface dropped env in the BUILD LOG (not just the server console) so a
     // key-rotation data loss is visible to the operator instead of the build
     // silently running with missing env.
@@ -1331,7 +1333,11 @@ async function executeBuildAndDeploy(
       // alongside the real monorepo row (no DB unique constraint on
       // (projectId, name)). Filter to compose-kind before handing it off.
       const composeOnly = snapshot.composeServices?.filter((s) => serviceKind(s) === "compose");
-      if (composeOnly?.length && !snapshot.capacityAdjustment) {
+      if (snapshot.runtimeSecurityRefresh) {
+        const { assertSecurityRefreshConfiguration } = await import("../updates/security-refresh-guard");
+        await assertSecurityRefreshConfiguration(await repos.project.findById(project.id), snapshot);
+      }
+      if (composeOnly?.length && !snapshot.capacityAdjustment && !snapshot.runtimeSecurityRefresh) {
         // removeMissing: false — this list is the release's frozen snapshot, not
         // an authoritative inventory. On a rollback it predates services added
         // since; on any deploy the delete cascades `service_deployment` and so

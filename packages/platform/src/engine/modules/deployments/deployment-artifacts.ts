@@ -14,6 +14,7 @@ const IMAGE_ID = /^sha256:[a-f0-9]{64}$/;
 export function replaysFrozenDeployment(dep: { trigger?: string | null; meta?: unknown }): boolean {
   return (
     dep.trigger === "rollback" ||
+    !!(dep.meta as { runtimeSecurityRefresh?: unknown } | null)?.runtimeSecurityRefresh ||
     typeof (dep.meta as { retryBuildFromDeploymentId?: unknown } | null)
       ?.retryBuildFromDeploymentId === "string"
   );

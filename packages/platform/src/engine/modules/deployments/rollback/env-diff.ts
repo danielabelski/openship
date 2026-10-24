@@ -72,7 +72,12 @@ export interface EnvDiffInput {
    * an authored empty literal is. Raw expressions cannot be compared to frozen
    * values without reporting changes the rollback will never perform.
    */
-  liveServices?: Array<{ name: string; overrides: Record<string, string> }>;
+  liveServices?: Array<{
+    name: string;
+    overrides: Record<string, string>;
+    /** Decrypted service-scoped capture, when the release retained one. */
+    frozen?: Record<string, string>;
+  }>;
   strategy: EnvRestoreStrategy;
   /** Default 200. */
   cap?: number;
@@ -92,6 +97,19 @@ export function diffFrozenEnv(input: EnvDiffInput): EnvDiff {
 
   if (input.strategy === "unchanged") {
     return { strategy: "unchanged", changes: [], totalChanges: 0, truncated: false };
+  }
+
+  if (services.some((service) => service.frozen !== undefined)) {
+    // A scoped capture must be compared only to its own service. Never present
+    // one service's secret as a project-wide rollback value.
+    const changes = services.flatMap((service) => diffFrozenEnv({
+      frozen: { ...input.frozen, ...service.frozen },
+      liveProject: { ...input.liveProject, ...service.overrides },
+      strategy: input.strategy,
+      cap: Number.MAX_SAFE_INTEGER,
+    }).changes.map((change) => ({ ...change, serviceName: service.name })));
+    changes.sort((a, b) => RANK[a.direction] - RANK[b.direction] || a.key.localeCompare(b.key));
+    return { strategy: input.strategy, changes: changes.slice(0, cap), totalChanges: changes.length, truncated: changes.length > cap };
   }
 
   const keys = new Set<string>([

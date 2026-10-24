@@ -4,6 +4,7 @@ import { env } from "../../config/env";
 import type { BuildStrategy } from "@repo/core";
 import { AppError } from "@repo/core";
 import { getFolderSession } from "../projects/folder/session-store";
+import type { RuntimeSecurityRefresh } from "./pinned-artifacts";
 
 export interface BuildConfigSnapshotLike {
   repoUrl: string;
@@ -34,6 +35,8 @@ export interface BuildConfigSnapshotLike {
    *  pulls natively. This is how migration hands its images to the native pipeline
    *  instead of forking a second deploy path. */
   handoverImages?: Record<string, string>;
+  /** Signed registry artifact, acquired through the normal pre-cutover image preparation. */
+  runtimeSecurityRefresh?: RuntimeSecurityRefresh;
   /** This deployment must refresh registry-backed images even when their
    * mutable tag already exists on the target daemon. */
   forcePullImages?: boolean;

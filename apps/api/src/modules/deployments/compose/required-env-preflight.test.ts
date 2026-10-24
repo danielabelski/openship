@@ -115,6 +115,34 @@ beforeEach(() => {
 });
 
 describe("required Compose environment before image preparation", () => {
+  it("freezes automatic refresh env by service and retains that scope during rollback", async () => {
+    const meta = {
+      runtimeSecurityRefresh: { deploymentId: "active", approvedBy: "owner" },
+      targetServiceIds: ["api"],
+      serviceEnvVars: { api: sealed({ TOKEN: "api-secret", SHARED: "api-override" }) },
+    };
+    state.env.api = sealed({ TOKEN: "new-pending-secret", ADDED: "pending" });
+    state.env.worker = sealed({ TOKEN: "worker-secret" });
+    const load = (name: string, depMeta: Record<string, unknown>, trigger = "update") => loadServiceDeployEnvironment({
+      projectId: "project",
+      dep: { trigger, environment: "production", meta: depMeta },
+      service: service(name, {}) as never,
+      projectEnv: { SHARED: "project-value" },
+      frozenEnv: { SHARED: "project-value" },
+      logger: new BuildLogger(() => {}),
+    });
+    expect((await load("api", meta)).env).toEqual({ TOKEN: "api-secret", SHARED: "api-override" });
+    await expect(load("worker", meta)).rejects.toThrow(/does not belong/);
+    const rollback = { serviceEnvVars: meta.serviceEnvVars };
+    expect((await load("api", rollback, "rollback")).env).toEqual({
+      TOKEN: "api-secret", SHARED: "api-override", ADDED: "pending",
+    });
+    expect((await load("worker", rollback, "rollback")).env).toEqual({
+      TOKEN: "worker-secret", SHARED: "project-value",
+    });
+    await expect(load("api", { ...meta, serviceEnvVars: { api: { TOKEN: "invalid-ciphertext" } } })).rejects.toThrow(/could not be decrypted/);
+  });
+
   it("retries the built image with the normal service-scoped secret loader", async () => {
     state.env.api = sealed({ SERVICE_TOKEN: "fixed-runtime-token" });
     const resolved = await loadServiceDeployEnvironment({
