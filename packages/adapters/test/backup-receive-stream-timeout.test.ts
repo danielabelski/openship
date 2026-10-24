@@ -18,7 +18,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -214,7 +214,13 @@ describe("receiveStream no longer depends on wait() answering", () => {
     const exec = await h.executor();
     const controller = new AbortController();
     let failure: Error | undefined;
-    const p = exec.receiveStream(SERVICE, SOURCE_ID, Readable.from([Buffer.from("x")]), {
+    // Upload-idle cancellation applies while the source is still open. Once
+    // EOF arrives, the log request has its own bound and the overall deadline.
+    const body = stop === "restore idle"
+      ? new Readable({ read() {} })
+      : Readable.from([Buffer.from("x")]);
+    if (stop === "restore idle") body.push(Buffer.from("x"));
+    const p = exec.receiveStream(SERVICE, SOURCE_ID, body, {
       compression: "none",
       idleTimeoutMs: stop === "restore idle" ? 1_000 : 60_000,
       timeoutMs: stop === "restore ceiling" ? 1_000 : stop === "disabled ceiling" ? 0 : 60_000,
@@ -411,6 +417,57 @@ describe("silence is bounded, traffic is not", () => {
 
     await expect(drive(p, 30_000)).rejects.toThrow(/exceeded its 10s ceiling/);
   });
+
+  it.each(["validation", "extraction"])(
+    "allows local %s to outlast the upload idle window",
+    async (phase) => {
+      let waits = 0;
+      const h = harness({ inspect: [{ Running: true }] }, () => ({
+        wait: () => {
+          const validating = waits++ === 0;
+          const delay = validating === (phase === "validation") ? 8_000 : 500;
+          return new Promise((resolve) => setTimeout(() => resolve({ StatusCode: 0 }), delay));
+        },
+      }));
+      const exec = await h.executor();
+      await expect(
+        drive(
+          exec.receiveStream(SERVICE, SOURCE_ID, Readable.from([Buffer.from("archive")]), {
+            compression: "none",
+            idleTimeoutMs: 5_000,
+            timeoutMs: 20_000,
+          }),
+          25_000,
+        ),
+      ).resolves.toEqual({ bytesWritten: 7 });
+      expect(h.removals).toEqual([{ force: true }, { force: true, v: true }]);
+    },
+  );
+
+  it.each(["ceiling", "cancellation"])(
+    "still stops a stalled local extraction on %s",
+    async (stop) => {
+      let waits = 0;
+      const h = harness({ inspect: [{ Running: true }] }, () => ({
+        wait: () => waits++ === 0
+          ? new Promise((resolve) => setTimeout(() => resolve({ StatusCode: 0 }), 500))
+          : new Promise(() => {}),
+      }));
+      const exec = await h.executor();
+      const controller = new AbortController();
+      const restoring = exec.receiveStream(SERVICE, SOURCE_ID, Readable.from([Buffer.from("archive")]), {
+        compression: "none",
+        idleTimeoutMs: 5_000,
+        timeoutMs: 10_000,
+        signal: controller.signal,
+      });
+      if (stop === "cancellation") setTimeout(() => controller.abort(), 6_000);
+      await expect(drive(restoring, 15_000)).rejects.toThrow(
+        stop === "cancellation" ? /cancelled/ : /exceeded.*ceiling/,
+      );
+      expect(h.removals).toEqual([{ force: true }, { force: true, v: true }]);
+    },
+  );
 });
 
 describe("the helper is always reaped", () => {
@@ -536,6 +593,45 @@ describe("a volume restore never destroys the target before it can write", () =>
       Binds: ["pgdata:/mnt"],
       VolumesFrom: ["helper_1:ro"],
     });
+  });
+
+  it("rejects a failed staged archive read even if tar accepts its output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "openship-restore-read-failure-"));
+    try {
+      const input = join(dir, "input");
+      const stage = join(dir, "stage");
+      const bin = join(dir, "bin");
+      for (const path of [input, stage, bin]) mkdirSync(path);
+      writeFileSync(join(input, "file"), "valid archive contents");
+      const archive = spawnSync("tar", ["-cf", "-", "-C", input, "file"]);
+      expect(archive.status).toBe(0);
+      // Upload succeeds. Reading the staged file emits valid tar data, then
+      // fails: tar's exit status alone cannot establish a successful read.
+      writeFileSync(join(bin, "cat"), '#!/bin/sh\n/bin/cat "$@"\nif [ "$#" -gt 0 ]; then exit 23; fi\n', { mode: 0o755 });
+      const script = (await helperScript("none")).replaceAll("/restore", stage);
+      const result = spawnSync("/bin/sh", ["-ec", script], {
+        input: archive.stdout,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+      expect(result.status).toBe(23);
+      expect(result.stderr.toString()).toContain("staged archive read failed with status 23");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts valid tar padding larger than the validation pipe buffer", async () => {
+    const stage = mkdtempSync(join(tmpdir(), "openship-restore-padding-"));
+    try {
+      const script = (await helperScript("none")).replaceAll("/restore", stage);
+      const result = spawnSync("/bin/sh", ["-ec", script], {
+        // An empty tar followed by zero padding remains a valid archive.
+        input: Buffer.alloc(1024 * 1024),
+      });
+      expect(result.status, result.stderr.toString()).toBe(0);
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+    }
   });
 
   it("fails promptly on source failure without creating an extraction helper", async () => {

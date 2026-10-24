@@ -26,7 +26,8 @@ import {
 } from "../../runtime/docker-exec-stream";
 import { ensureScopedVolumeName, isHostPathSource } from "../../runtime/volume-namespace";
 import { resolveCloudProjectVolumeName } from "../../runtime/cloud/docker-volume";
-import { safeDumpCommand, safeRestoreCommand, type DumpCodec } from "../common/dump-pipeline";
+import { safeDumpCommand, safePipelineFragment, safeRestoreCommand, type DumpCodec } from "../common/dump-pipeline";
+import { DEFAULT_CONTAINER_LOG_CONFIG } from "../../container-logging";
 import { matchBackupSource } from "../common/source-match";
 import { registerExecutor } from "../registry";
 import type {
@@ -775,8 +776,13 @@ export class DockerBackupExecutor implements BackupExecutor {
             "rm -f /restore/archive.input",
             // tar treats an empty stream as success on some implementations.
             "test -s /restore/archive.tar",
-            // A pipe forces tar to read file contents rather than seeking past EOF.
-            "cat /restore/archive.tar | tar -tf - >/dev/null",
+            // Read through a pipe so tar cannot seek past truncated file contents.
+            // Drain valid trailing padding too, without hiding an archive read error.
+            safePipelineFragment(
+              "cat /restore/archive.tar",
+              "tar -tf - >/dev/null && cat >/dev/null",
+              { left: "the staged archive read", right: "archive validation" },
+            ),
           ].join("\n"),
         ],
         // AutoRemove is OFF deliberately, and this is the fix for the `404 no such
@@ -785,7 +791,11 @@ export class DockerBackupExecutor implements BackupExecutor {
         // withHelper reaps instead — which also plugs a leak AutoRemove never
         // covered, since it only fires for a container that actually started.
         Volumes: { "/restore": {} },
-        HostConfig: { AutoRemove: false },
+        HostConfig: {
+          AutoRemove: false,
+          // The receipt must remain readable even when the daemon disables logs.
+          LogConfig: DEFAULT_CONTAINER_LOG_CONFIG,
+        },
         AttachStdin: true,
         AttachStdout: true,
         AttachStderr: true,
@@ -896,7 +906,10 @@ export class DockerBackupExecutor implements BackupExecutor {
           });
           body.on("end", () => {
             bodyEnded = true;
-            watchdog.touch();
+            // Validation and extraction use local daemon I/O after upload, with
+            // no further network traffic. The overall deadline and abort watch
+            // still bound those phases; upload silence no longer indicates a stall.
+            watchdog.dispose();
           });
           body.pipe(stream);
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import {
@@ -122,4 +122,27 @@ describeDockerE2E("volume restore validates before clearing (#1417)", () => {
       expect(await command("test ! -e /data/blob && echo intact")).toBe("intact");
     },
   );
+
+  it("restores when the daemon's default logging driver cannot read receipts", async () => {
+    const createContainer = runtime.docker.createContainer.bind(runtime.docker);
+    // Emulate a daemon default of log-driver=none without reconfiguring it.
+    const create = vi.spyOn(runtime.docker, "createContainer").mockImplementation((options) =>
+      createContainer({
+        ...options,
+        HostConfig: { LogConfig: { Type: "none", Config: {} }, ...options.HostConfig },
+      }),
+    );
+    try {
+      await seed();
+      await executor.receiveStream(service, sourceId, chunks(archive), {
+        compression: "none",
+        clearTarget: true,
+        timeoutMs: 30_000,
+      });
+      expect(await command("sha256sum /data/blob")).toBe(digest);
+      expect(await command("test ! -e /data/keep && echo cleared")).toBe("cleared");
+    } finally {
+      create.mockRestore();
+    }
+  });
 });
