@@ -4,7 +4,6 @@ import {
   type DeployEnvironment,
   type DeployPipelineInput,
   type DeployRouting,
-  type DeferredDeployment,
 } from "./deploy-pipeline";
 import type { BuildLogger } from "./build-pipeline";
 import type { DeployConfig } from "../types";
@@ -228,7 +227,7 @@ describe("runDeployPipeline cutover ordering", () => {
     expect(events.indexOf("stop-activated:new-container")).toBeLessThan(events.indexOf("reactivate"));
   });
 
-  it("non-overlap: a failed replacement stop leaves the previous release retained", async () => {
+  it("non-overlap: a failing stopActivated still attempts the revert", async () => {
     const events: string[] = [];
     const env = recordingEnv(events, {
       canOverlap: false,
@@ -250,8 +249,8 @@ describe("runDeployPipeline cutover ordering", () => {
     const res = await runDeployPipeline(env, makeInput(), fakeLogger());
 
     expect(res.status).toBe("failed");
-    // Do not restart a second writer against the same persistent volume.
-    expect(events).not.toContain("reactivate");
+    // Best-effort: a failed stop must not swallow the revert attempt.
+    expect(events).toContain("reactivate");
   });
 
   it("overlap never stops the activated deployment — nothing to free", async () => {
@@ -377,80 +376,9 @@ describe("runDeployPipeline cutover ordering", () => {
   });
 });
 
-describe("deferred Compose readiness", () => {
-  function retainedEnv(events: string[], over: Partial<DeployEnvironment> = {}) {
-    return recordingEnv(events, {
-      deactivateRetaining: async () => { events.push("stop-old"); },
-      retireRetainedPrevious: async () => { events.push("retire-old"); },
-      stopActivated: async () => { events.push("stop-new"); },
-      reactivatePrevious: async () => { events.push("restore-old"); },
-      ...over,
-    });
-  }
-
-  it("retains the predecessor until the stack passes, and commits once", async () => {
-    const events: string[] = [];
-    let activation!: DeferredDeployment;
-    const result = await runDeployPipeline(retainedEnv(events), makeInput({
-      deferCompletion: value => { activation = value; },
-    }), fakeLogger());
-    expect(result.status).toBe("ready");
-    expect(events).toEqual(["stop-old", "activate", "route"]);
-    await expect(activation.complete()).resolves.toMatchObject({ status: "ready" });
-    await activation.complete();
-    expect(events).toEqual(["stop-old", "activate", "route", "retire-old"]);
-  });
-
-  it("stops a failed replacement before restoring the predecessor and its routes", async () => {
-    const events: string[] = [];
-    let activation!: DeferredDeployment;
-    await runDeployPipeline(retainedEnv(events, {
-      resolveRoute: async id => ({ targetUrl: `http://${id}:3000` }),
-    }), makeInput({
-      domains: [{ hostname: "app.example.com", tls: false, targetPort: 3000 }],
-      routing: { registerRoute: async route => { events.push(`route:${route.targetUrl}`); } },
-      deferCompletion: value => { activation = value; },
-    }), fakeLogger());
-    const failed = await activation.rollback(new Error("readiness failed"));
-    expect(failed).toMatchObject({ status: "failed", restoredPreviousContainerId: "old" });
-    expect(events).toEqual(["stop-old", "activate", "route:http://new-container:3000",
-      "stop-new", "restore-old", "route:http://old:3000"]);
-    expect(await activation.complete()).toBe(failed);
-    expect(events).not.toContain("retire-old");
-  });
-
-  it("does not restore a second writer when stopping the replacement is unconfirmed", async () => {
-    const events: string[] = [];
-    let activation!: DeferredDeployment;
-    await runDeployPipeline(retainedEnv(events, {
-      stopActivated: async () => { throw new Error("daemon unavailable"); },
-    }), makeInput({ deferCompletion: value => { activation = value; } }), fakeLogger());
-    const result = await activation.rollback(new Error("readiness failed"));
-    expect(result.restoredPreviousContainerId).toBeUndefined();
-    expect(events).not.toContain("restore-old");
-    expect(events).not.toContain("retire-old");
-  });
-
-  it.each([false, true])("honors cancellation during the stack checks (keep resources: %s)", async keep => {
-    const events: string[] = [];
-    const controller = new AbortController();
-    let keepProvisioned = false;
-    let activation!: DeferredDeployment;
-    await runDeployPipeline(retainedEnv(events), makeInput({
-      signal: controller.signal,
-      keepProvisionedOnCancel: () => keepProvisioned,
-      deferCompletion: value => { activation = value; },
-    }), fakeLogger());
-    keepProvisioned = keep;
-    controller.abort();
-    await expect(activation.complete()).resolves.toMatchObject({ status: "cancelled" });
-    expect(events).not.toContain("retire-old");
-    expect(events.includes("stop-new")).toBe(!keep);
-    expect(events.includes("restore-old")).toBe(!keep);
-  });
-});
-
-// Domains are optional; routing failures remain warnings on a live deployment.
+// Domains are OPTIONAL — routing runs after the container is up + healthy, so a
+// routing failure must never flip the deploy to "failed". It's collected as a
+// per-domain warning on a still-"ready" result.
 describe("runDeployPipeline routing is best-effort", () => {
   const domain = { hostname: "app.example.com", tls: false, targetPort: 3000 };
 
@@ -668,7 +596,7 @@ describe("runDeployPipeline bounds best-effort teardown (#629)", () => {
     expect(res.status).toBe("ready");
   });
 
-  it("non-overlap: an unconfirmed pre-stop cannot activate a second writer", async () => {
+  it("non-overlap: a pre-stop that never settles does not claim a retention", async () => {
     // The retention flag drives two later decisions, so recording it after a
     // timeout would tell the failure path to restore a deployment that was never
     // stopped and the success path to retire one we may not own.
@@ -683,28 +611,11 @@ describe("runDeployPipeline bounds best-effort teardown (#629)", () => {
 
     const res = await runDeployPipeline(env, makeInput(bounded), fakeLogger());
 
-    expect(res.status).toBe("failed");
-    expect(events).not.toContain("activate");
+    expect(res.status).toBe("ready");
     expect(events).not.toContain("retire");
   });
 
-  it("stops a reported replacement after a lost start response before restoring the previous release", async () => {
-    const events: string[] = [];
-    const env = recordingEnv(events, {
-      deactivateRetaining: async () => { events.push("retain"); },
-      activate: async (_config, _log, onCreated) => {
-        onCreated?.("created-container");
-        throw new Error("start response was lost");
-      },
-      stopActivated: async id => { events.push(`stop:${id}`); },
-      reactivatePrevious: async id => { events.push(`restore:${id}`); },
-    });
-    const result = await runDeployPipeline(env, makeInput(bounded), fakeLogger());
-    expect(result).toMatchObject({ status: "failed", containerId: "created-container" });
-    expect(events).toEqual(["retain", "stop:created-container", "restore:old"]);
-  });
-
-  it("non-overlap: an unconfirmed replacement stop cannot restart a second writer", async () => {
+  it("non-overlap: a stopActivated that never settles still attempts the revert", async () => {
     const events: string[] = [];
     const env = recordingEnv(events, {
       canOverlap: false,
@@ -723,7 +634,7 @@ describe("runDeployPipeline bounds best-effort teardown (#629)", () => {
     const res = await runDeployPipeline(env, makeInput(bounded), fakeLogger());
 
     expect(res.status).toBe("failed");
-    expect(events).not.toContain("reactivate");
+    expect(events).toContain("reactivate");
   });
 
   it("non-overlap: a revert that never settles still reaches a FAILED verdict", async () => {

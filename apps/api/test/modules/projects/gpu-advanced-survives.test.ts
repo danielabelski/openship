@@ -51,15 +51,11 @@ it("carries inspected GPU selectors through discovery, adoption and the next con
       ],
     },
   };
-  let removed = false;
   (runtime as any)._docker = {
     getContainer: () => ({
-      inspect: async () => {
-        if (removed) throw Object.assign(new Error("No such container"), { statusCode: 404 });
-        return raw;
-      },
+      inspect: async () => raw,
       stop: async () => {},
-      remove: async () => { removed = true; },
+      remove: async () => {},
     }),
     getImage: () => ({ inspect: async () => ({ RepoDigests: [] }) }),
     createContainer: async (args: Record<string, any>) => {

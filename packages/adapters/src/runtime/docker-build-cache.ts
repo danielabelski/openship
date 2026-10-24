@@ -1,5 +1,6 @@
 import type Dockerode from "dockerode";
 import { AppError } from "@repo/core";
+import { diagnostics } from "@repo/core/diagnostics";
 import type { CommandExecutor } from "../types";
 import { projectBuildKitWorker } from "./docker-buildkit-worker";
 import { sq } from "./build-pipeline";
@@ -18,12 +19,19 @@ export interface BuildStorage {
   freeInodes: number | null;
 }
 
-/** Measure Docker's filesystem, never the control plane's filesystem. */
-export const DOCKER_BUILD_STORAGE_COMMAND =
-  'root="$(docker info --format "{{.DockerRootDir}}")"; ' +
+const BUILD_STORAGE_READ =
   '[ -d "$root" ] || exit 1; ' +
-  'df -Pk "$root" | awk \'NR==2{print "OPENSHIP_STORAGE",$2,$4}\'; ' +
-  'df -Pi "$root" 2>/dev/null | awk \'NR==2{print "OPENSHIP_INODES",$2,$4}\'';
+  `df -Pk "$root" | awk 'NR==2{print "OPENSHIP_STORAGE",$2,$4}'; ` +
+  `df -Pi "$root" 2>/dev/null | awk 'NR==2{print "OPENSHIP_INODES",$2,$4}'`;
+
+/** Measure the selected daemon's filesystem, never the control plane's. */
+export const DOCKER_BUILD_STORAGE_COMMAND =
+  'root="$(docker info --format "{{.DockerRootDir}}")"; ' + BUILD_STORAGE_READ;
+
+/** The caller resolved this path through its Docker client before elevation. */
+export function dockerBuildStorageCommand(root: string): string {
+  return `root=${sq(root)}; ` + BUILD_STORAGE_READ;
+}
 
 export function parseBuildStorage(raw: string): BuildStorage {
   const lines = raw.trim().split(/\r?\n/);
@@ -182,6 +190,8 @@ export async function pruneManagedBuildCaches(
   executor: CommandExecutor,
   options: {
     keepBytes?: number;
+    /** Maintenance sweeps can spend longer measuring than build admission. */
+    measurementTimeoutMs?: number;
     projectId?: string;
     now?: number;
     protectedProjectIds?: ReadonlySet<string>;
@@ -212,7 +222,23 @@ export async function pruneManagedBuildCaches(
         return { ...volume, UsageData: { Size: 0, RefCount: references } };
       if (!volume.Mountpoint?.startsWith("/"))
         throw new Error("Build-cache volume has no host storage path");
-      const raw = await executor.exec(`du -sk -- ${sq(volume.Mountpoint)}`, { timeout: 15_000 });
+      let raw: string;
+      try {
+        raw = await executor.exec(`du -sk -- ${sq(volume.Mountpoint)}`, {
+          timeout: options.projectId || requestedKeepBytes === 0 ? 120_000 : (options.measurementTimeoutMs ?? 15_000),
+        });
+      } catch (error) {
+        // Accounting is optional during automatic retention. A large idle cache
+        // can take longer to walk than a command deadline; retain that volume
+        // for a later sweep instead of failing an otherwise successful build.
+        // Explicit removal and unconfirmed command exits remain failures.
+        if (error instanceof Error && error.name === "TimeoutError" && !options.projectId && requestedKeepBytes > 0) {
+          diagnostics.warn("adapters/runtime/docker-build-cache",
+            `Build-cache size inspection timed out for ${volume.Name}; retained for a later cleanup.`);
+          return null;
+        }
+        throw error;
+      }
       const kb = Number(raw.trim().split(/\s+/)[0]);
       if (!Number.isSafeInteger(kb) || kb < 0 || !raw.trim())
         throw new Error("Could not measure build-cache volume size");
@@ -302,5 +328,5 @@ export async function touchProjectBuildCache(
 }
 
 export function buildKitCacheConfig(storage: BuildStorage): string {
-  return `[worker.oci]\ngc = true\nreservedSpace = 0\nmaxUsedSpace = ${buildCacheKeepBytes(storage)}\nminFreeSpace = "${BUILD_STORAGE_GC_FREE_FRACTION * 100}%"\n`;
+  return `insecure-entitlements = []\n[worker.oci]\nnetworkMode = "bridge"\ngc = true\nreservedSpace = 0\nmaxUsedSpace = ${buildCacheKeepBytes(storage)}\nminFreeSpace = "${BUILD_STORAGE_GC_FREE_FRACTION * 100}%"\n`;
 }

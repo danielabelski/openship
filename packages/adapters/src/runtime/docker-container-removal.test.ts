@@ -19,7 +19,7 @@ async function fixture() {
     return inspection;
   });
   const stop = vi.fn(async () => undefined);
-  const remove = vi.fn(async () => {
+  const remove = vi.fn(async (): Promise<void> => {
     throw removing();
   });
   const getContainer = vi.fn((id: string) => ({ id, inspect, stop, remove }));
@@ -130,38 +130,33 @@ describe("Docker container removal convergence", () => {
     },
   );
 
-  it("cancels the legacy name-replacement wait before creating a second workload", async () => {
+  it("cancels an in-progress removal without sending another mutation", async () => {
     vi.useFakeTimers();
     const f = await fixture();
-    const createContainer = vi.fn();
-    Object.assign(f.docker, {
-      getImage: () => ({ inspect: async () => ({ Config: {} }) }),
-      createContainer,
-    });
     const controller = new AbortController();
-    const operation = f.runtime.deployServiceWorkload(
-      { id: "network" },
-      {
-        deploymentId: "deployment",
-        projectId: "project",
-        slug: "demo",
-        serviceName: "db",
-        image: "busybox:1.37.0",
-        imageAlreadyPrepared: true,
-        ports: [],
-        environment: {},
-        volumes: [],
-        namespaceVolumes: true,
-        signal: controller.signal,
-      },
-    );
+    const operation = removeDockerContainer(f.docker, OLD, { signal: controller.signal });
     const expected = expect(operation).rejects.toThrow("cancelled by owner");
     await vi.advanceTimersByTimeAsync(500);
     controller.abort(new Error("cancelled by owner"));
     await expected;
-    f.gone();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(createContainer).not.toHaveBeenCalled();
+    expect(f.remove).toHaveBeenCalledOnce();
+  });
+
+  it("honors a configured stop grace longer than the default removal deadline", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    Object.assign(f.inspection, { Config: { StopTimeout: 300 } });
+    f.stop.mockImplementation(
+      () => new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 300_000)),
+    );
+    f.remove.mockImplementation(async () => {
+      f.gone();
+    });
+    const operation = removeDockerContainer(f.docker, OLD);
+    const expected = expect(operation).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(300_000);
+    await expected;
+    expect(f.remove).toHaveBeenCalledOnce();
   });
 
   it("rechecks access for the pinned identity before either mutation", async () => {

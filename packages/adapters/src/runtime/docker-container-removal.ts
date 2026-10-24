@@ -42,20 +42,18 @@ export async function removeDockerContainer(
     assertAccess?: (containerId: string) => Promise<void>;
   } = {},
 ): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? 120_000;
+  let timeoutMs = options.timeoutMs ?? 120_000;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
     throw new Error("Container removal requires a positive timeout.");
   options.signal?.throwIfAborted();
   const deadline = new AbortController();
-  const timer = setTimeout(
-    () =>
-      deadline.abort(
-        new Error(
-          `Container removal did not finish within ${timeoutMs}ms; the old container's removal is still unconfirmed.`,
-        ),
+  const expire = () =>
+    deadline.abort(
+      new Error(
+        `Container removal did not finish within ${timeoutMs}ms; the old container's removal is still unconfirmed.`,
       ),
-    timeoutMs,
-  );
+    );
+  let timer = setTimeout(expire, timeoutMs);
   timer.unref?.();
   const signal = options.signal
     ? AbortSignal.any([options.signal, deadline.signal])
@@ -85,6 +83,16 @@ export async function removeDockerContainer(
     if (!/^[a-f0-9]{64}$/.test(inspected.Id ?? ""))
       throw new Error("Cannot verify the exact container identity before removal.");
     const id = inspected.Id;
+    // A configured graceful shutdown may take longer than the removal wait.
+    // Preserve that allowance; only an explicit caller deadline overrides it.
+    const graceMs =
+      Number((inspected.Config as { StopTimeout?: number } | undefined)?.StopTimeout ?? 0) * 1_000;
+    if (options.timeoutMs === undefined && Number.isFinite(graceMs) && graceMs > 0) {
+      timeoutMs += graceMs;
+      clearTimeout(timer);
+      timer = setTimeout(expire, Math.min(timeoutMs, 2_147_483_647));
+      timer.unref?.();
+    }
     await request(async () => options.assertAccess?.(id));
     const container = docker.getContainer(id);
     if (inspected.State?.Status !== "removing") {

@@ -676,6 +676,11 @@
       "select": "Alan adı seçin...",
       "clear": "Seçimi temizle"
     },
+    "buildQueue": {
+      "label": "Eski derlemeleri iptal et",
+      "description": "Yalnızca bekleyen en son push saklanır. Etkinleştirildiğinde yeni bir push, sürüm adımları başlamadan önce eski otomatik derlemeyi de iptal eder. Manuel dağıtımlar ve geri almalar korunur.",
+      "saveFailed": "Derleme iptal tercihi kaydedilemedi"
+    },
     "autoDeployCard": {
       "title": "Otomatik Dağıtım",
       "enabled": "Etkin",
@@ -1233,5 +1238,37 @@
     "connection": "GitHub bağlantısı",
     "deliveryFailed": "Kontroller iletilemedi",
     "saveFailed": "GitHub kontrol ayarları kaydedilemedi."
+  },
+  "runtimeUpdates": {
+    "options": "Yeniden dağıtım seçenekleri",
+    "refresh": "İmajları yenile ve yeniden dağıt",
+    "refreshing": "İmajlar yenileniyor…",
+    "check": "İmaj güncellemelerini denetle",
+    "title": "İmaj güncellemeleri",
+    "failed": "İmaj yenileme başlatılamadı.",
+    "uncertain": "İstek zaman aşımına uğradı. Yeniden denemeden önce dağıtım geçmişini kontrol edin.",
+    "available": "İmaj güncellemeleri mevcut",
+    "current": "İmaj özetleri kayıt defterinde son gözlenen özetlerle eşleşiyor.",
+    "checkUnavailable": "Karşılaştırma için kayıtlı özetler ve kayıt deposuna erişim gerekir.",
+    "checkFailed": "İmaj güncellemeleri denetlenemedi.",
+    "pinned": "İmajlar özetle sabitlenmiş. Güncellemek için yapılandırılan referansı düzenleyin."
+  },
+  "securityAdvisories": {
+    "reviewApps": "Etkilenen uygulamaları incele ({count})",
+    "pendingApps": "{count} uygulama için kontroller bekleniyor. Sonuçlar otomatik olarak görünecek.",
+    "checkAgain": "Tekrar kontrol et",
+    "checking": "Kontrol ediliyor…",
+    "title": "Güvenlik bildirimleri",
+    "unavailable": "Güvenlik kontrolleri kullanılamıyor veya güncel değil. Önceki bildirimler görünür kalır.",
+    "affected": "Güncellemeden önce etkilenen çalışma ortamını ve yayımlanan önerileri inceleyin.",
+    "noMatches": "Kontrol edilen verilerle eşleşen bildirim yok. Bu, tam bir güvenlik açığı taraması değildir.",
+    "partial": "Bazı çalışma ortamları belirlenemedi. Ana makine süreçleri, durdurulmuş konteynerler ve desteklenmeyen imajlar elle kontrol gerektirebilir.",
+    "guidance": "Bildirimi oku",
+    "automatic": "Doğrulanmış güvenlik yamalarını otomatik güncelle",
+    "automaticDescription": "Varsayılan olarak kapalıdır. Yalnızca mevcut etiketinde imzalı düzeltme bulunan imaj servisleri otomatik güncellenir. Kaynak derlemeleri, sabitlenmiş imajlar ve sürüm değişiklikleri inceleme gerektirir. Normal dağıtım ve sağlık kontrolleri geçerlidir.",
+    "notifications": "Güvenlik bildirimleri kanallarda varsayılan olarak açıktır. Her kanalı Ayarlar → Bildirimler bölümünden yönetebilirsiniz.",
+    "publicFeed": "Herkese açık akışı gör",
+    "checked": "Kanıtlar kontrol edildi",
+    "possible": "İmaj etiketi eşleşiyor; dağıtılan sürüm doğrulanmalı."
   }
 }
