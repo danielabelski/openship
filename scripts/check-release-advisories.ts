@@ -16,7 +16,7 @@ export function checkReleaseAdvisories(text: string, tag: string): void {
     ids.add(advisory.id);
     if (!advisory.affects.trim() || !validRange(advisory.affects)) throw new Error("Invalid affected-version range");
     const modes = raw.advisories[index].modes;
-    if (modes !== undefined && (!Array.isArray(modes) || modes.length === 0 || modes.some((mode: unknown) => !ADVISORY_MODES.includes(mode as never))))
+    if (modes !== undefined && (!Array.isArray(modes) || modes.length === 0 || modes.some((mode: unknown) => !ADVISORY_MODES.some((allowed) => allowed === mode))))
       throw new Error("Omit modes for all installations, or name supported modes explicitly");
     if (advisory.title.length > 500 || advisory.message.length > 16000) throw new Error("Announcement text is too long");
   }
