@@ -1260,7 +1260,10 @@ async function deployComposeServicesCore(
     // install OpenResty/certbot must NOT fail the deploy. The services still run;
     // routing is flagged action-required and retried later.
     try {
-      if (plannedRoutes.length > 0 || hasFanoutRoutes) {
+      if (plannedRoutes.length > 0 || hasFanoutRoutes || usesHostLoopback) {
+        // Even private services need authoritative edge inventory before the
+        // shared loopback port reservation. Match the single-app preflight on
+        // fresh hosts; missing inventory must never be interpreted as empty.
         // Components + edge convergence as ONE step — see ensureRoutingReady for why
         // the second half can't live inside ensureFeature. Without an executor
         // there's no box to converge (cloud), so components alone are correct.
