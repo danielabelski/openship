@@ -177,7 +177,8 @@ Runtime access and stop failures abort before the restore can replace data.
 Docker volume and bind restores receive and validate the complete archive in a
 temporary volume on the destination daemon before mounting the target for writes.
 A disconnected source, failed decompressor or truncated archive leaves existing
-contents untouched. Allow free disk space for the uncompressed archive in addition
+contents untouched. The destination's received byte count must also match the source.
+Allow free disk space for the compressed and uncompressed archive in addition
 to the restored data. The temporary volume is removed after success or failure.
 Extraction itself is not transactional: a disk failure or cancellation after it
 starts can leave partial data, and the failed restore remains stopped for review.

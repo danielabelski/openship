@@ -767,7 +767,12 @@ export class DockerBackupExecutor implements BackupExecutor {
           "-ec",
           [
             prelude,
-            safeRestoreCommand(restoreCodec, "cat > /restore/archive.tar")[2],
+            "cat > /restore/archive.input",
+            "printf 'openship-restore-bytes: '; wc -c < /restore/archive.input",
+            compression === "none"
+              ? "mv /restore/archive.input /restore/archive.tar"
+              : `( ${safeRestoreCommand(restoreCodec, "cat > /restore/archive.tar")[2]} ) < /restore/archive.input`,
+            "rm -f /restore/archive.input",
             // tar treats an empty stream as success on some implementations.
             "test -s /restore/archive.tar",
             // A pipe forces tar to read file contents rather than seeking past EOF.
@@ -898,6 +903,15 @@ export class DockerBackupExecutor implements BackupExecutor {
           await awaitSuccess(helper, () => bodyEnded, errChunks);
           if (!bodyEnded)
             throw new Error("Restore helper exited before receiving the complete archive");
+          // tar may accept EOF at a member boundary. Verify the destination's
+          // actual byte count too, rather than trusting a successful socket write.
+          const receipt = await helperLogText(helper, exitDeadline - Date.now(), [
+            watchdog.promise,
+            cancelled,
+          ]);
+          const received = /^openship-restore-bytes: (\d+)\s*$/m.exec(receipt.toString("utf8"));
+          if (!received || Number(received[1]) !== bytesWritten)
+            throw new Error("Restore transfer was incomplete; the target has not been changed");
           opts?.signal?.throwIfAborted();
           if (isFile) {
             if (source.type !== "bind")
@@ -920,9 +934,7 @@ export class DockerBackupExecutor implements BackupExecutor {
               },
               async (helper) => {
                 await helper.start();
-                const exit = await helper.wait();
-                if (exit.StatusCode !== 0)
-                  throw new Error(`Cannot prepare file destination ${source.source}`);
+                await awaitSuccess(helper, () => true);
               },
             );
           }

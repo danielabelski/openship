@@ -34,7 +34,28 @@ vi.mock("../src/runtime/docker-exec-stream", () => ({
 
 import { DockerRuntime } from "../src/runtime/docker";
 import type { ServiceHandle } from "../src/backup/types";
-import { dockerFrame, drive, FakeAttachStream, harness } from "./helpers/docker-helper-harness";
+import {
+  dockerFrame,
+  drive,
+  FakeAttachStream,
+  harness as helperHarness,
+} from "./helpers/docker-helper-harness";
+
+function harness(
+  script: Parameters<typeof helperHarness>[0],
+  extras: Parameters<typeof helperHarness>[1] = () => ({}),
+) {
+  return helperHarness(script, (context) => ({
+    logs: async () => {
+      const bytes = (attach.current as FakeAttachStream).written.reduce(
+        (n, chunk) => n + chunk.length,
+        0,
+      );
+      return Readable.from([dockerFrame(1, `openship-restore-bytes: ${bytes}\n`)]);
+    },
+    ...extras(context),
+  }));
+}
 
 const SERVICE: ServiceHandle = {
   id: "svc_1",
@@ -538,6 +559,50 @@ describe("a volume restore never destroys the target before it can write", () =>
     expect(h.created).toHaveLength(1);
     expect(h.created[0]!.HostConfig).not.toHaveProperty("Binds");
     expect(h.removals).toEqual([{ force: true, v: true }]);
+  });
+
+  it("refuses a successful tar receipt when the transport lost complete archive members", async () => {
+    const h = harness({ wait: 0 }, () => ({
+      logs: async () => Readable.from([dockerFrame(1, "openship-restore-bytes: 1024\n")]),
+    }));
+    const exec = await h.executor();
+    await expect(
+      drive(
+        exec.receiveStream(SERVICE, SOURCE_ID, Readable.from([Buffer.alloc(2048)]), {
+          compression: "none",
+          clearTarget: true,
+        }),
+        10_000,
+      ),
+    ).rejects.toThrow("transfer was incomplete");
+    expect(h.created).toHaveLength(1);
+    expect(h.created[0]!.HostConfig).not.toHaveProperty("Binds");
+  });
+
+  it("also bounds preparation of a bind-file target when Docker wait does not answer", async () => {
+    const h = harness({ wait: "hang", inspect: [{ Running: false, ExitCode: 0 }] });
+    const exec = await h.executor();
+    const service = { ...SERVICE, volumes: ["/tmp/openship-test-settings:/app/settings"] };
+    vi.spyOn(exec, "listSources").mockResolvedValue([
+      {
+        id: "settings",
+        type: "bind",
+        source: "/tmp/openship-test-settings",
+        target: "/app/settings",
+        isDirectory: false,
+      },
+    ]);
+    await expect(
+      drive(
+        exec.receiveStream(service, "settings", Readable.from([Buffer.from("x")]), {
+          compression: "none",
+          sourceIsFile: true,
+        }),
+        30_000,
+      ),
+    ).resolves.toMatchObject({ bytesWritten: 1 });
+    expect(h.created).toHaveLength(3);
+    expect(h.removals).toHaveLength(3);
   });
 
   it("reports the decompressor's failure rather than tar's success", async () => {
