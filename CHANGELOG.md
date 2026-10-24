@@ -289,9 +289,10 @@ receive reliability and security fixes. These notes cover changes since 0.9.3.
   Git revision with refreshed base images. Automatic refresh is off by default
   and requires explicit consent, a signed affected/fixed digest pair, an eligible
   image service and unchanged configuration. It pins the approved replacement,
-  preserves scoped environment variables and persistent volumes, and verifies the
-  deployed result. Concurrent requests admit one automatic attempt; rollback
-  clears the one-time security instruction. Explicit digest pins remain fixed.
+  uses the normal refresh and environment-resolution flow, preserves persistent
+  volumes, and verifies the deployed result. Late environment changes stop an
+  automatic update for review. Concurrent requests admit one automatic attempt;
+  rollback clears the one-time approval. Explicit digest pins remain fixed.
 - **Deliver security notices through existing notification channels** — verified,
   enabled channels receive matching alerts by default, with a per-channel opt-out
   and durable delivery deduplication. Feed checks share authentication-aware

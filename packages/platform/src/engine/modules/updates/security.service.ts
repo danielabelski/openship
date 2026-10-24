@@ -28,6 +28,7 @@ import { getAdvisoryFeed, type AdvisoryFeedState } from "./advisory-feed";
 import { projectSecurityInventory } from "./security-inventory";
 import { updateProjectRuntime } from "./runtime-update";
 import { buildProjectSecurityResult } from "./security-status";
+import { approveSecurityUpdate } from "./security-refresh-guard";
 
 const key = (...parts: (string | number | null)[]) =>
   createHash("sha256").update(JSON.stringify(parts)).digest("hex");
@@ -241,7 +242,15 @@ export async function applySecurityAdvisory(
         ctx,
         projectId,
         input.serviceId ? { serviceIds: [input.serviceId] } : {},
-        verified,
+        verified && match.serviceId
+          ? await approveSecurityUpdate(project, {
+              deploymentId: verified.deploymentId,
+              approvedBy: ctx.userId,
+              expiresAt: verified.expiresAt,
+              serviceId: match.serviceId,
+              image: verified.images[match.serviceId]!,
+            })
+          : undefined,
       );
       if (automatic)
         await repos.securityAdvisory.finishAttempt(attempt, {

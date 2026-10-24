@@ -70,7 +70,8 @@ import { decryptEnvMap, encrypt } from "../../lib/encryption";
 import { getCommitByRef, getLatestCommit, getRepository } from "../github/github.service";
 import { assertGitHubRepoAccess } from "../github/github-access";
 import { resolveSmartRoute } from "./smart-route";
-import { snapshotNeedsGitSource, snapshotNeedsProjectSource, withoutPinnedArtifacts, strictRefreshImages, type RuntimeSecurityRefresh } from "./pinned-artifacts";
+import type { SecurityUpdateApproval } from "../updates/security-refresh-guard";
+import { snapshotNeedsGitSource, snapshotNeedsProjectSource, withoutPinnedArtifacts, strictRefreshImages } from "./pinned-artifacts";
 import { deploymentWorkload, projectToClass, snapshotToClass } from "./deployment-class";
 import { needsRunningApplication } from "./build-execution-plan";
 import {
@@ -216,8 +217,8 @@ export async function runDeploymentPreflight(
 
 /** Config snapshot stored in deployment.meta - self-contained build+deploy config. */
 export interface DeploymentConfigSnapshot {
-  /** Internal signed image refresh: replay configuration, replace only verified images. */
-  runtimeSecurityRefresh?: RuntimeSecurityRefresh;
+  /** Consent and expected state for an automatic trigger; never environment overrides. */
+  securityApproval?: SecurityUpdateApproval;
   /** Worker-authored completed-image receipt and one-shot retry provenance. */
   completedBuildArtifacts?: import("./deployment-artifacts").DeploymentArtifacts;
   retryBuildFromDeploymentId?: string;
@@ -416,10 +417,6 @@ export interface DeploymentConfigSnapshot {
    * capture can be told apart without guessing.
    */
   envCapture?: "flat-v1";
-  /** Complete managed environment captured for individual services, encrypted
-   * with the same codec as envVars. Scoped values never enter the project map.
-   * Retained on rollback; absent services keep the existing layered behavior. */
-  serviceEnvVars?: Record<string, Record<string, string>>;
   /**
    * Smart per-service target list. When set, only these service ids
    * are (re)built; others are recorded as `service_deployment` rows
@@ -2731,7 +2728,7 @@ export interface DeploymentTriggerInput {
     /** Internal reviewed resource edit, never accepted from an HTTP deployment body. */
     resourceChanges?: DeploymentResourceChanges;
     /** Internal consent-bound instruction; never accepted from public deployment inputs. */
-    securityRefresh?: DeploymentConfigSnapshot["runtimeSecurityRefresh"];
+    securityApproval?: SecurityUpdateApproval;
     /**
      * Release/dist source: deploy THIS specific version (the `release` webhook
      * passes the published tag). Omitted for a manual redeploy, which re-resolves
@@ -2959,8 +2956,8 @@ async function triggerDeploymentNow(ctx: RequestContext, data: DeploymentTrigger
   else delete snapshot.forcePullImages;
   // Consent belongs to this admission. A later rollback must replay its artifact
   // without inheriting an earlier automatic update's source/consent checks.
-  if (data.securityRefresh) snapshot.runtimeSecurityRefresh = data.securityRefresh;
-  else delete snapshot.runtimeSecurityRefresh;
+  if (data.securityApproval) snapshot.securityApproval = data.securityApproval;
+  else delete snapshot.securityApproval;
   const routeState = await resolveProjectRouteState(project);
 
   // Resolve the snapshot's target (deployTarget + serverId + runtimeMode) from
@@ -3012,6 +3009,19 @@ async function triggerDeploymentNow(ctx: RequestContext, data: DeploymentTrigger
   );
   const { useServicePipeline, servicePreflightServices } = serviceMode;
   freezeResolvedServicePipeline(snapshot, serviceMode);
+  if (data.securityApproval) {
+    const service = await repos.service.findById(data.securityApproval.serviceId);
+    if (
+      !service ||
+      service.projectId !== project.id ||
+      data.serviceIds?.length !== 1 ||
+      data.serviceIds[0] !== service.id
+    )
+      throw new AppError("Automatic update requires exactly its approved service.", 409);
+    // Resolve a verified registry artifact through the existing image preparation;
+    // configuration and environment still use the normal refresh snapshot.
+    snapshot.handoverImages = { [service.name]: data.securityApproval.image };
+  }
 
   // Resolve once, before preflight: a single-app refresh is a pinned-artifact
   // deploy, so preflight and git-token resolution must both see that it needs no

@@ -245,8 +245,8 @@ async function compareServiceEnvironment(ctx: ExecutionContext, saved: SavedEnvi
   return { live, desired, changedKeys };
 }
 
-/** Internal deployment capture. Never returns image defaults or accepts pending env edits. */
-export async function captureSyncedServiceEnvironment(ctx: ExecutionContext, projectId: string, serviceId: string) {
+/** Confirm saved configuration matches the running service before unattended changes. */
+export async function assertSyncedServiceEnvironment(ctx: ExecutionContext, projectId: string, serviceId: string) {
   const saved = await loadServiceEnvironment(ctx, projectId, serviceId);
   const { desired, changedKeys } = await compareServiceEnvironment(ctx, saved);
   if (changedKeys.length) throw new AppError("The saved and running environments differ. Review and apply those changes before automatic security updates.", 409, "SECURITY_ENVIRONMENT_PENDING");

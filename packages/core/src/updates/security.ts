@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { valid, validRange, satisfies } from "semver";
+import { INSPECTED_RUNTIMES, type InspectedRuntime } from "../stacks";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const range = z
@@ -15,18 +16,8 @@ const httpsUrl = z
     const url = new URL(value);
     return url.protocol === "https:" && !url.username && !url.password;
   });
-export const SECURITY_RUNTIMES = [
-  "node",
-  "bun",
-  "deno",
-  "python",
-  "php",
-  "ruby",
-  "java",
-  "dotnet",
-  "go",
-] as const;
-export type SecurityRuntime = (typeof SECURITY_RUNTIMES)[number];
+export const SECURITY_RUNTIMES = INSPECTED_RUNTIMES;
+export type SecurityRuntime = InspectedRuntime;
 
 export const SecurityAdvisorySchema = z
   .object({

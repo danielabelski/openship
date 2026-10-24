@@ -42,7 +42,7 @@ const readJson = async (response: Response): Promise<unknown> =>
 type CachedFeed = NonNullable<Awaited<ReturnType<typeof repos.securityAdvisory.feed>>>;
 const pending = new Map<string, Promise<CachedFeed | undefined>>();
 
-/** One cached request per installation, not per tenant/browser/project. Credentials stay on api.github.com. */
+/** One cached request per feed and installation, shared across tenants/browsers/projects. Credentials stay on api.github.com. */
 async function poll(
   id: "security" | "release",
   token: string | null,

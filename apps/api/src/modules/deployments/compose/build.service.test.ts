@@ -317,13 +317,13 @@ describe("Cloud Docker uses the shared Compose source planner", () => {
 });
 
 describe("prebuilt registry images (#878)", () => {
-  it("keeps rollback artifacts local but acquires signed patch digests from the registry before cutover", async () => {
+  it("keeps retained artifacts local and acquires force-pulled registry digests before cutover", async () => {
     const image = `docker.io/library/node@sha256:${"a".repeat(64)}`;
     const service = { ...repoService({ build: null }), image: "node:22-alpine" };
     const retained = await run([service], undefined, { handoverImages: { dinohash: image } });
     expect(retained.result.preparedLocalImages.get("svc-1")).toBe(image);
     const patch = await run([service], undefined, { handoverImages: { dinohash: image },
-      runtimeSecurityRefresh: { deploymentId: "old", approvedBy: "owner", expiresAt: "2026-10-25T00:00:00Z" },
+      forcePullImages: true,
     });
     expect(patch.captured).toEqual([]);
     expect(patch.result.imageRefs.get("svc-1")).toBe(image);

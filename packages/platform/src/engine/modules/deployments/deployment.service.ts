@@ -248,7 +248,6 @@ async function describeRestoreConsequences(
       composeServices?: Array<{ name?: string }>;
       serviceDeploymentMode?: "services" | "single";
       targetServiceIds?: string[];
-      serviceEnvVars?: Record<string, Record<string, string>>;
     };
     const liveServiceRows = await repos.service.listByProject(project.id);
 
@@ -307,11 +306,7 @@ async function describeRestoreConsequences(
           ([key]) => overriddenProjectKeys.has(key) || !Object.hasOwn(liveProject, key),
         ),
       );
-      return {
-        name: svc.name,
-        overrides,
-        ...(snapshot.serviceEnvVars?.[svc.id] && { frozen: decryptEnvMap(snapshot.serviceEnvVars[svc.id]) }),
-      };
+      return { name: svc.name, overrides };
     });
 
     return {

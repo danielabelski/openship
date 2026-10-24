@@ -24,13 +24,6 @@
 import { classNeedsGitSource, hasRelativeVolumeMounts } from "@repo/core";
 import { snapshotToClass, type SnapshotClassInput } from "./deployment-class";
 
-/** Internal, one-deployment authorization for a signed replacement image. */
-export interface RuntimeSecurityRefresh {
-  deploymentId: string;
-  approvedBy: string;
-  expiresAt: string;
-}
-
 /** Structural view of the fields this module reads. `DeploymentConfigSnapshot`
  *  satisfies it — kept structural so there's no import cycle with build.service.
  *  The source-axis fields (repoUrl/framework/localPath/…) feed `snapshotToClass`
@@ -63,7 +56,7 @@ export interface PinnedArtifactSnapshot extends SnapshotClassInput {
   strictServiceScope?: boolean;
   refreshServiceIds?: string[];
   forcePullImages?: boolean;
-  runtimeSecurityRefresh?: RuntimeSecurityRefresh;
+  securityApproval?: unknown;
   completedBuildArtifacts?: unknown;
   retryBuildFromDeploymentId?: string;
   roleConfiguration?: unknown;
@@ -155,7 +148,7 @@ export function withoutPinnedArtifacts<T extends PinnedArtifactSnapshot>(snapsho
     strictServiceScope: _strictScope,
     refreshServiceIds: _refreshServices,
     forcePullImages: _forcePull,
-    runtimeSecurityRefresh: _securityRefresh,
+    securityApproval: _securityApproval,
     completedBuildArtifacts: _completedArtifacts,
     retryBuildFromDeploymentId: _retryBuild,
     capacityAdjustment: _capacityAdjustment,

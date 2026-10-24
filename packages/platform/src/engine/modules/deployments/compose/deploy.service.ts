@@ -15,6 +15,7 @@ import { findActiveDeployment, findProjectDeployment } from "@repo/platform/engi
 import { repos, type Deployment, type Domain, type Project, type Service } from "@repo/db";
 import { deploymentForcesImagePull, deploymentImagePullPolicy, isMutableImageRef } from "../image-pull-policy";
 import type { DeploymentConfigSnapshot } from "../build.service";
+import { assertSecurityUpdateEnvironment } from "../../updates/security-refresh-guard";
 import { assertCloudDeploymentLimits } from "../../../lib/plan-guard";
 import { resolveInheritedResources, resolveRuntimeResources } from "../../../lib/resources";
 import { posix as pathPosix } from "node:path";
@@ -1122,10 +1123,10 @@ async function deployComposeServicesCore(
   }
 
   const services = await repos.service.listByProject(project.id);
-  // Verify the exact rows this invocation will use. Later edits cannot change
-  // this in-memory configuration or its scoped, frozen environment.
+  // Verify the exact service rows this invocation will use. The ordinary
+  // environment resolver checks its final values against the same approval.
   const securitySnapshot = dep.meta as DeploymentConfigSnapshot | null;
-  if (securitySnapshot?.runtimeSecurityRefresh) {
+  if (securitySnapshot?.securityApproval) {
     const { assertSecurityRefreshConfiguration } = await import("../../updates/security-refresh-guard");
     await assertSecurityRefreshConfiguration(await repos.project.findById(project.id), securitySnapshot, services);
   }
@@ -1931,6 +1932,7 @@ async function deployComposeServicesCore(
       );
     }
 
+    assertSecurityUpdateEnvironment(project.id, securitySnapshot?.securityApproval, service, mergedEnv);
     const resolved = {
       mergedEnv,
       missingRequired: [...new Set(layered.missingRequired.map((item) => item.variable))],

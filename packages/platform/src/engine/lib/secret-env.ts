@@ -335,8 +335,7 @@ export function maskScanService<T extends Parameters<typeof publicScanService>[0
  * (`meta.composeServices[].environment` and `buildArgs`). Returns a copy — the stored row/meta
  * is untouched (rollback/redeploy read the real values back). Apply at the
  * shared presentation boundary: `getDeployment` is also used internally and must
- * use the decrypted repository values. Service environment captures are private
- * replay material and are omitted entirely, including their ciphertext.
+ * use the decrypted repository values. No-op when there's no `meta.composeServices`.
  */
 export function maskDeploymentEnv<T extends { meta?: unknown } | null | undefined>(dep: T): T {
   if (
@@ -349,13 +348,11 @@ export function maskDeploymentEnv<T extends { meta?: unknown } | null | undefine
     return dep;
   }
   const meta = dep.meta as Record<string, unknown>;
-  const { serviceEnvVars: _privateServiceEnvironment, ...publicMeta } = meta;
-  if (!Array.isArray(meta.composeServices))
-    return _privateServiceEnvironment ? { ...dep, meta: publicMeta } : dep;
+  if (!Array.isArray(meta.composeServices)) return dep;
   return {
     ...dep,
     meta: {
-      ...publicMeta,
+      ...meta,
       composeServices: maskServicesEnv(
         meta.composeServices as { environment?: Record<string, string> | null }[],
         (dep as { projectId?: string }).projectId,

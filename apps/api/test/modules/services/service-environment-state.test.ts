@@ -8,7 +8,7 @@ import { decrypt, encrypt } from "@repo/platform/engine/lib/encryption";
 import * as deploymentRuntime from "@repo/platform/engine/lib/deployment-runtime";
 import * as edgeTarget from "@repo/platform/engine/lib/edge-target";
 import * as serverTarget from "@repo/platform/engine/lib/server-target";
-import { captureSyncedServiceEnvironment } from "@repo/platform/engine/modules/services/service-environment-state";
+import { assertSyncedServiceEnvironment } from "@repo/platform/engine/modules/services/service-environment-state";
 import { buildBackgroundContext } from "@repo/platform/engine/lib/background-context";
 import { serviceRoutes } from "../../../src/modules/services/service.routes";
 import { healthRoutes } from "../../../src/modules/health/health.routes";
@@ -94,13 +94,13 @@ describe("effective service environment through HTTP, SDK and real storage", () 
     vi.spyOn(runtime, "inspectImageEnv").mockResolvedValue(["NODE_VERSION=22.0.0"]);
     vi.mocked(deploymentRuntime.resolveDeploymentRuntimeForRead).mockResolvedValue({ runtime, serverId: null, hostPortTarget: null });
     const ctx = buildBackgroundContext({ userId: owner.userId, organizationId: owner.orgId });
-    expect(await captureSyncedServiceEnvironment(ctx, project.id, service.id)).toEqual(env);
+    expect(await assertSyncedServiceEnvironment(ctx, project.id, service.id)).toEqual(env);
     inspect.mockResolvedValue({ ...detail, env: [...detail.env, "UNSAVED=keep-me"] });
-    await expect(captureSyncedServiceEnvironment(ctx, project.id, service.id)).rejects.toThrow(/saved and running environments differ/);
+    await expect(assertSyncedServiceEnvironment(ctx, project.id, service.id)).rejects.toThrow(/saved and running environments differ/);
     inspect.mockResolvedValue({ ...detail, env: detail.env.filter((item) => !item.startsWith("SHARED=")) });
-    await expect(captureSyncedServiceEnvironment(ctx, project.id, service.id)).rejects.toThrow(/saved and running environments differ/);
+    await expect(assertSyncedServiceEnvironment(ctx, project.id, service.id)).rejects.toThrow(/saved and running environments differ/);
     inspect.mockRejectedValue(new Error("Docker unavailable"));
-    await expect(captureSyncedServiceEnvironment(ctx, project.id, service.id)).rejects.toThrow(/Docker unavailable/);
+    await expect(assertSyncedServiceEnvironment(ctx, project.id, service.id)).rejects.toThrow(/Docker unavailable/);
   });
 
   it("shows Compose and shared variables with zero overrides, without contacting Docker or leaking secrets", async () => {

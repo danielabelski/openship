@@ -69,7 +69,7 @@ See [GitHub's REST API guidance](https://docs.github.com/en/rest/using-the-rest-
 Shared-IP rate limits can still delay checks; a five-minute schedule is not a
 delivery-time guarantee.
 
-The inventory reads existing deployment receipts. Version commands are compiled
+The inventory reads existing deployment receipts. Version commands come from the shared stack/runtime registry compiled
 into Openship, run only through an adapter's isolated container executor, have a
 ten-second timeout, and run with concurrency two. Supported version probes cover
 Node.js, Bun, Deno, Python, PHP, Ruby, Java, .NET and Go. Missing shells, stopped
@@ -135,15 +135,24 @@ This permits only the following case:
 4. The approving account still has project write permission, consent is still
    enabled, and the active deployment has not changed.
 
-The deployment freezes the existing configuration and pins that run's artifact to
-the verified replacement digest. It targets only the affected service and checks
-consent, instruction expiry and configuration again in the worker. It does not change the saved tag or run
-commands supplied by the feed. The captured service environment is encrypted and
-scoped to that service, including during rollback; it never becomes a shared
-project environment. Pending edits made after admission cannot enter the patch.
-A failed attempt requires manual review rather
-than repeatedly redeploying. Revoking consent prevents queued work that has not
-passed its worker check; use deployment cancellation for work already executing.
+Both manual and automatic actions call the existing runtime-refresh operation.
+Automatic work adds a one-run approval containing the original deployment,
+approver, expiry, verified image digest and a keyed environment fingerprint.
+It does not copy service environment values into another snapshot or use the
+rollback/replay path. The ordinary deployment resolver reads the existing
+project/service variables, handles interpolation, pulls the approved image and
+performs cutover. A comparison against the fingerprint rejects changed values
+before the service is replaced. Saved configuration edits remain pending; an
+automatic update does not write its snapshot back over them.
+
+The registry image is acquired through the same force-pull preparation used by
+manual refresh, with a digest pin for this run. The saved tag remains unchanged.
+Consent, active deployment, permissions and configuration are checked again in
+the worker. A failed attempt requires manual review rather than repeated deploys.
+Revoking consent prevents queued work that has not passed its worker check;
+use deployment cancellation for work already executing. Rollback uses its
+existing environment and retained-artifact behavior, with no advisory-specific
+replay layer.
 Normal health checks reduce deployment risk but cannot prove application-level
 compatibility or undo database migrations run by an image.
 

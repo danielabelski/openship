@@ -17,7 +17,10 @@ import {
 } from "@repo/platform/engine/modules/updates/security.service";
 import { securityOverview } from "@repo/platform/engine/modules/updates/security-overview";
 import { securityProbeKey } from "@repo/platform/engine/modules/updates/security-inventory";
-import { assertSecurityRefreshConfiguration } from "@repo/platform/engine/modules/updates/security-refresh-guard";
+import {
+  assertSecurityRefreshConfiguration,
+  assertSecurityUpdateEnvironment,
+} from "@repo/platform/engine/modules/updates/security-refresh-guard";
 import { notification } from "@repo/platform/engine/lib/notification-dispatcher";
 import { notificationPreferenceAllows } from "@repo/platform/engine/lib/notification-preferences";
 import { projectServicesToDeployableServices } from "@repo/platform/engine/modules/deployments/compose/project-services";
@@ -36,7 +39,7 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock("@repo/platform/engine/modules/services/service-environment-state", async (original) => ({
   ...(await original<object>()),
-  captureSyncedServiceEnvironment: h.environment,
+  assertSyncedServiceEnvironment: h.environment,
 }));
 vi.mock("@repo/platform/engine/modules/updates/advisory-feed", () => ({ getAdvisoryFeed: h.feed }));
 vi.mock("@repo/platform/engine/modules/deployments/build.service", async (original) => ({
@@ -328,14 +331,23 @@ describe("security operations", () => {
     await setProjectSecurityPolicy(f.ctx, f.project.id, { autoRefresh: true });
     await applySecurityAdvisory(f.ctx, f.project.id, f.input, true);
     const input = h.deploy.mock.calls[0][1];
-    expect(input.reuseSnapshot.meta.handoverImages).toEqual({
-      web: `docker.io/library/node@${FIXED}`,
+    expect(input.reuseSnapshot).toBeUndefined();
+    expect(input.envVars).toBeUndefined();
+    expect(input.securityApproval).toMatchObject({
+      deploymentId: f.deployment.id,
+      serviceId: f.service.id,
+      image: `docker.io/library/node@${FIXED}`,
+      environmentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(input.reuseSnapshot.meta.composeServices[0].image).toBe("node:22");
-    expect(input.reuseSnapshot.envVars).toEqual(f.deployment.envVars);
-    const captured = input.reuseSnapshot.meta.serviceEnvVars[f.service.id];
-    expect(captured.SERVICE_TOKEN).not.toBe("service-only-secret");
-    expect(decryptEnvMap(captured)).toEqual({ SERVICE_TOKEN: "service-only-secret" });
+    expect(JSON.stringify(input)).not.toContain("service-only-secret");
+    const resolved = { SERVICE_TOKEN: "service-only-secret" };
+    assertSecurityUpdateEnvironment(f.project.id, input.securityApproval, f.service, resolved);
+    expect(resolved).toEqual({ SERVICE_TOKEN: "service-only-secret" });
+    expect(() =>
+      assertSecurityUpdateEnvironment(f.project.id, input.securityApproval, f.service, {
+        SERVICE_TOKEN: "later-value",
+      }),
+    ).toThrow(/environment changed/);
     expect((await repos.service.findById(f.service.id))?.image).toBe("node:22");
     await applySecurityAdvisory(f.ctx, f.project.id, f.input, true);
     expect(h.deploy).toHaveBeenCalledTimes(1);
@@ -357,14 +369,20 @@ describe("security operations", () => {
     const f = await fixture();
     await setProjectSecurityPolicy(f.ctx, f.project.id, { autoRefresh: true });
     await applySecurityAdvisory(f.ctx, f.project.id, f.input, true);
-    const snapshot = h.deploy.mock.calls[0][1].reuseSnapshot.meta;
+    const approval = h.deploy.mock.calls[0][1].securityApproval;
+    const snapshot = {
+      ...f.deployment.meta,
+      securityApproval: approval,
+      targetServiceIds: [f.service.id],
+      handoverImages: { web: approval.image },
+    };
     const current = (await repos.project.findById(f.project.id))!;
     await assertSecurityRefreshConfiguration(current, snapshot);
     await expect(
       assertSecurityRefreshConfiguration(current, {
         ...snapshot,
-        runtimeSecurityRefresh: {
-          ...snapshot.runtimeSecurityRefresh,
+        securityApproval: {
+          ...snapshot.securityApproval,
           expiresAt: new Date(0).toISOString(),
         },
       }),

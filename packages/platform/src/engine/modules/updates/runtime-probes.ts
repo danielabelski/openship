@@ -1,21 +1,14 @@
-import { SECURITY_RUNTIMES, type SecurityRuntime, type SecurityRuntimeEvidence } from "@repo/core";
+import {
+  RUNTIME_VERSION_COMMANDS,
+  SECURITY_RUNTIMES,
+  type SecurityRuntime,
+  type SecurityRuntimeEvidence,
+} from "@repo/core";
 
-// Deliberately compiled into Openship. A feed cannot provide commands, args or paths.
-const commands = {
-  node: "node --version",
-  bun: "bun --version",
-  deno: "deno --version",
-  python: "python3 --version",
-  php: "php --version",
-  ruby: "ruby --version",
-  java: "java -version",
-  dotnet: "dotnet --list-runtimes",
-  go: "go version",
-} as const;
 export function runtimeVersionProbe(runtimes: readonly SecurityRuntime[]): string {
   return (
     "unset NODE_OPTIONS BUN_OPTIONS RUBYOPT JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS PYTHONSTARTUP PYTHONPATH; " +
-    Object.entries(commands)
+    Object.entries(RUNTIME_VERSION_COMMANDS)
       .filter(([runtime]) => runtimes.includes(runtime as SecurityRuntime))
       .map(
         ([runtime, command]) =>
