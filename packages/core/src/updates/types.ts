@@ -113,10 +113,12 @@ export const GITHUB_REPO = "oblien/openship";
 /** GitHub API: the latest published (non-prerelease) release. */
 export const RELEASES_LATEST_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
+/** Publisher-owned announcement data. Editing this document does not replace binaries. */
+export const RELEASE_ADVISORIES_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/release-advisories.json`;
+
 /**
- * Raw advisory manifest URL, PINNED to a release tag. Because it's pinned to a
- * tag (not a branch), it only changes when a version is released — commits to
- * `main` are invisible to clients. Returns null for an empty tag.
+ * Tagged fallback for installations checking before the live document exists
+ * or while it is unavailable. Runtime artifacts remain pinned to their release.
  */
 export function advisoryManifestUrl(tag: string): string {
   return `https://raw.githubusercontent.com/${GITHUB_REPO}/${encodeURIComponent(tag)}/release-advisories.json`;

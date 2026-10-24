@@ -2,6 +2,7 @@ import {
   RELEASES_LATEST_API,
   SECURITY_FEED_API,
   releaseDocuments,
+  releaseAdvisories,
   updatePollInterval,
   updateRetryAt,
   type ReleaseFeedSnapshot,
@@ -38,6 +39,12 @@ async function readText(response: Response): Promise<string> {
 }
 const readJson = async (response: Response): Promise<unknown> =>
   JSON.parse(await readText(response));
+
+/** Public documents never receive the GitHub credential, including after a 304. */
+const publicDocumentFetch = (async (url: Parameters<typeof fetch>[0]) => {
+  const result = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(10_000) });
+  return new Response(await readText(result), { status: result.status });
+}) as typeof fetch;
 
 type CachedFeed = NonNullable<Awaited<ReturnType<typeof repos.securityAdvisory.feed>>>;
 const pending = new Map<string, Promise<CachedFeed | undefined>>();
@@ -103,21 +110,25 @@ async function poll(
           )
             throw new Error("Invalid GitHub release.");
           // Public raw content never receives the user's credential; both reads are bounded.
-          const documents = await releaseDocuments(release.tag_name, (async (
-            url: Parameters<typeof fetch>[0],
-          ) => {
-            const result = await fetch(url, {
-              redirect: "error",
-              signal: AbortSignal.timeout(10_000),
-            });
-            return new Response(await readText(result), { status: result.status });
-          }) as typeof fetch);
+          const documents = await releaseDocuments(
+            release.tag_name,
+            publicDocumentFetch,
+            (row.body as ReleaseFeedSnapshot | null)?.manifest ?? null,
+          );
           body = {
             ...documents,
             manifest:
               documents.manifest ?? (row.body as ReleaseFeedSnapshot | null)?.manifest ?? null,
           };
         }
+      } else if (id === "release") {
+        const cached = row.body as ReleaseFeedSnapshot | null;
+        if (!cached?.latest) throw new Error("Conditional release response has no cached release.");
+        // A notice can change without a new binary release or GitHub release ETag.
+        body = {
+          ...cached,
+          manifest: await releaseAdvisories(cached.latest.tag, publicDocumentFetch, cached.manifest),
+        };
       }
       if (!body) throw new Error("Conditional advisory response has no cached body.");
       if (id === "security") verifySecurityManifest(body, { minimumRevision: revision });

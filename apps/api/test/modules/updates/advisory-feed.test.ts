@@ -1,7 +1,7 @@
 import { generateKeyPairSync, sign } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db, schema, seedOwner } from "../jobs/_harness";
-import { securitySigningBytes } from "@repo/core";
+import { securitySigningBytes, RELEASE_ADVISORIES_URL } from "@repo/core";
 import { getAdvisoryFeed } from "@repo/platform/engine/modules/updates/advisory-feed";
 import { buildBackgroundContext } from "@repo/platform/engine/lib/background-context";
 
@@ -88,12 +88,28 @@ describe("shared GitHub advisory transport", () => {
       rows.every((row) => row.nextCheckAt.getTime() - row.checkedAt!.getTime() === 3_600_000),
     ).toBe(true);
     await due();
-    fetcher.mockClear().mockResolvedValue(new Response(null, { status: 304 }));
+    fetcher.mockClear().mockImplementation(async (url) => String(url) === RELEASE_ADVISORIES_URL
+      ? Response.json({ advisories: [] }) : new Response(null, { status: 304 }));
     expect((await getAdvisoryFeed()).security?.revision).toBe(revision);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(
-      fetcher.mock.calls.every(([, options]) => new Headers(options.headers).has("if-none-match")),
+      fetcher.mock.calls.filter(([url]) => String(url).startsWith("https://api.github.com/"))
+        .every(([, options]) => new Headers(options.headers).has("if-none-match")),
     ).toBe(true);
+  });
+  it("refreshes announcement scope even when the binary release returns 304", async () => {
+    await getAdvisoryFeed();
+    await due();
+    fetcher.mockClear().mockImplementation(async (url) => String(url) === RELEASE_ADVISORIES_URL
+      ? Response.json({ advisories: [{ id: "urgent", severity: "critical", announce: true, affects: "<0.9.3", title: "Update", message: "All installations" }] })
+      : new Response(null, { status: 304 }));
+    const value = await getAdvisoryFeed();
+    expect(value.release.latest).toEqual({ tag: "v0.9.3", version: "0.9.3", notes: "Product changes." });
+    expect(value.release.manifest?.advisories[0]).toMatchObject({ id: "urgent", severity: "critical" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("CHANGELOG.md"))).toBe(false);
+    const [, options] = fetcher.mock.calls.find(([url]) => String(url) === RELEASE_ADVISORIES_URL)!;
+    expect(new Headers(options.headers).has("authorization")).toBe(false);
   });
   it("retains notices and respects rate-limit backoff across fresh calls", async () => {
     await getAdvisoryFeed();

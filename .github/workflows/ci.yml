@@ -4,6 +4,9 @@ on:
   pull_request: {}
   push:
     branches: [main]
+    # Announcement-only edits run the dedicated data validator, not application CI.
+    # Pull requests still report every required check; release gates are unchanged.
+    paths-ignore: [release-advisories.json]
     # NO `tags:` here, deliberately. Nothing in THIS file gates a release — the checks
     # that BLOCK a publish (this same suite plus the real-daemon E2E matrix) live in
     # release-gate.yml, which Release and Docker images each list in `needs:` because
@@ -23,7 +26,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Deliberately NO `paths:` filter. These jobs are required status checks, and a
+# Deliberately NO pull-request path filter. These jobs are required status checks, and a
 # path-filtered required check never reports on a PR it excluded — the PR is then
 # unmergeable forever with no visible reason.
 

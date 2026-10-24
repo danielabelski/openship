@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { updatePollInterval } from "@repo/core";
 const fetcher = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => ({
   app: { getVersion: () => "0.1.0" },
@@ -41,8 +42,24 @@ beforeEach(() => {
   vi.resetModules();
   fetcher.mockReset().mockImplementation(async (url) => feed(url));
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("desktop release snapshot ownership (#661)", () => {
+  it("refreshes live notices after the normal poll interval within the same app session", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const { checkForUpdate } = await import("../src/main/updater");
+    await checkForUpdate();
+    clock.mockReturnValue(1000 + updatePollInterval(false) - 1);
+    await checkForUpdate();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    clock.mockReturnValue(1000 + updatePollInterval(false) + 1);
+    fetcher.mockImplementation(async (url) => String(url).includes("/main/release-advisories.json")
+      ? Response.json({ advisories: [{ ...manifest.advisories[0], id: "new-notice" }] })
+      : feed(url));
+    const result = await checkForUpdate();
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(result).toMatchObject({ available: true, version: "99.0.0", announcement: { id: "new-notice" } });
+  });
   it("shares startup, renderer and simultaneous forced checks", async () => {
     const { checkForUpdate } = await import("../src/main/updater");
     const results = await Promise.all([

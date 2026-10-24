@@ -20,6 +20,7 @@ import {
   releaseDocuments,
   resolveDesktopUpdate,
   RELEASES_LATEST_API,
+  updatePollInterval,
   type DesktopUpdateAsset,
   type DesktopUpdateCheck,
   type DesktopUpdateSnapshot,
@@ -47,16 +48,19 @@ export type UpdateInfo = Extract<DesktopUpdateCheck, { available: true }>;
 export type UpdateCheck = DesktopUpdateSnapshot;
 
 let cachedCheck: UpdateCheck | null = null;
+let cachedCheckAt = 0;
 let inFlightCheck: Promise<UpdateCheck> | null = null;
 
 /** Startup, renderer navigation and manual checks share one request in flight. */
 export function checkForUpdate(options: { force?: boolean } = {}): Promise<UpdateCheck> {
   if (inFlightCheck) return inFlightCheck;
-  if (!options.force && cachedCheck) return Promise.resolve(cachedCheck);
+  if (!options.force && cachedCheck && Date.now() - cachedCheckAt < updatePollInterval(false))
+    return Promise.resolve(cachedCheck);
   inFlightCheck = checkForUpdateUncached()
     .then((result) => {
       // Offline is not a successful session cache: allow the next caller to retry.
       cachedCheck = result.latest ? result : null;
+      cachedCheckAt = result.latest ? Date.now() : 0;
       return result;
     })
     .finally(() => {
@@ -67,7 +71,7 @@ export function checkForUpdate(options: { force?: boolean } = {}): Promise<Updat
 
 /**
  * Ask GitHub for the latest release, then read the changelog and advisory
- * manifest pinned to its tag before handing the result to
+ * live announcement document before handing the result to
  * `resolveDesktopUpdate`. Never throws — a failed release check (offline,
  * rate-limited) resolves to "no update".
  *
@@ -96,7 +100,7 @@ async function checkForUpdateUncached(): Promise<UpdateCheck> {
         ...init,
         headers: { Accept: "application/json, text/markdown", "User-Agent": "Openship-Desktop" },
         signal: AbortSignal.timeout(10_000),
-      })) as typeof fetch);
+      })) as typeof fetch, cachedCheck?.manifest ?? null);
     const manifest = documents.manifest;
     return {
       ...resolveDesktopUpdate({
