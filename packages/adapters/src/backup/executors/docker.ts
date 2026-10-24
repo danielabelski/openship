@@ -812,8 +812,9 @@ export class DockerBackupExecutor implements BackupExecutor {
         const transferFailed = new Promise<never>((_, reject) => {
           failTransfer = reject;
         });
-        // Observe immediately: an input may fail while the helper is starting.
-        void transferFailed.catch(() => {});
+        void transferFailed.catch(() => {
+          // diagnostics-ignore: Observe early rejection during helper startup; awaitSuccess propagates it below.
+        });
         const onError = (error: Error) => failTransfer(error);
         const onBodyClose = () => {
           if (!body.readableEnded) failTransfer(new Error("Restore source closed before completing the archive"));
@@ -826,7 +827,9 @@ export class DockerBackupExecutor implements BackupExecutor {
           transferFailed,
           ...(abortWatch ? [abortWatch.promise] : []),
         ]);
-        void cancelled.catch(() => {});
+        void cancelled.catch(() => {
+          // diagnostics-ignore: Observe early cancellation; awaitSuccess races and propagates this same promise.
+        });
         const awaitSuccess = async (
           container: Dockerode.Container,
           ready: () => boolean,
