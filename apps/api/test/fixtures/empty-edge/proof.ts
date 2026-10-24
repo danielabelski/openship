@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { LocalExecutor } from "../../../../../packages/adapters/src/system/local-executor";
 import { scanOpenshipEdgeStrict } from "../../../../../packages/adapters/src/system/proxy/import/nginx";
 
@@ -15,6 +15,10 @@ async function reject(name: string) {
   cases.push(name);
 }
 if (process.argv[2] === "unprivileged") {
+  // Verify this exercises unreadable host files, rather than accidentally
+  // passing because the unprivileged process cannot reach Docker at all.
+  const daemon = spawnSync("docker", ["info"], { encoding: "utf8" });
+  assert.equal(daemon.status, 0, daemon.stderr);
   await assert.rejects(scanOpenshipEdgeStrict(executor), /Cannot read Openship edge routes/);
   process.exit(0);
 }
@@ -54,8 +58,10 @@ await mkdir("/var/lib/openship/edge/sites-enabled", { recursive: true });
 await writeFile("/var/lib/openship/edge/sites-enabled/hidden.conf", "server { listen 80; }");
 await chmod("/var/lib/openship", 0o700);
 try {
+  const socket = await stat("/var/run/docker.sock");
   const child = spawnSync(process.execPath, [process.argv[1]!, "unprivileged"], {
-    uid: 65534, gid: 0, encoding: "utf8",
+    uid: 65534, gid: socket.gid, encoding: "utf8",
+    env: { ...process.env, DOCKER_CONFIG: "/tmp" },
   });
   assert.equal(child.status, 0, child.stderr);
   cases.push("filesystem permission blindness fails closed");
