@@ -51,6 +51,6 @@ describeDockerE2E("strict edge inventory on a fresh Linux Docker host", () => {
   }, 120_000);
   it("permits an empty host and rejects live, dormant and unreadable ingress", () => {
     const output = docker("exec", name, "node", "/proof.mjs");
-    expect(JSON.parse(output).passed).toHaveLength(7);
+    expect(JSON.parse(output).passed).toHaveLength(8);
   }, 120_000);
 });

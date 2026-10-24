@@ -14,6 +14,7 @@ import { scanOpenshipEdgeStrict } from "./nginx";
 
 function executor(proof: string | Error = "__OPENSHIP_NO_INGRESS__") {
   return { exec: vi.fn(async (command: string) => {
+    if (command === "id -u") return "0";
     if (!command.includes("__OPENSHIP_NO_INGRESS__")) return "";
     if (proof instanceof Error) throw proof;
     return proof;

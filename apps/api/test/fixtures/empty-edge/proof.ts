@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { LocalExecutor } from "../../../../../packages/adapters/src/system/local-executor";
 import { scanOpenshipEdgeStrict } from "../../../../../packages/adapters/src/system/proxy/import/nginx";
 
@@ -13,6 +13,10 @@ async function empty() {
 async function reject(name: string) {
   await assert.rejects(scanOpenshipEdgeStrict(executor), /Cannot read Openship edge routes/);
   cases.push(name);
+}
+if (process.argv[2] === "unprivileged") {
+  await assert.rejects(scanOpenshipEdgeStrict(executor), /Cannot read Openship edge routes/);
+  process.exit(0);
 }
 await empty();
 cases.push("fresh private host needs no edge installation");
@@ -45,5 +49,16 @@ await empty();
 process.env.DOCKER_HOST = "unix:///missing-ingress-proof.sock";
 try { await reject("unreadable Docker inventory fails closed"); }
 finally { delete process.env.DOCKER_HOST; }
+await empty();
+await mkdir("/var/lib/openship/edge/sites-enabled", { recursive: true });
+await writeFile("/var/lib/openship/edge/sites-enabled/hidden.conf", "server { listen 80; }");
+await chmod("/var/lib/openship", 0o700);
+try {
+  const child = spawnSync(process.execPath, [process.argv[1]!, "unprivileged"], {
+    uid: 65534, gid: 0, encoding: "utf8",
+  });
+  assert.equal(child.status, 0, child.stderr);
+  cases.push("filesystem permission blindness fails closed");
+} finally { await rm("/var/lib/openship", { recursive: true }); }
 await empty();
 console.log(JSON.stringify({ passed: cases }));

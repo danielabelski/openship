@@ -23,6 +23,7 @@ import { containerCommand } from "../../edge-container-executor";
 import { detectEdgeContainer, resolveOurEdgeContainer } from "../detect";
 import { swarmEdgePorts } from "../swarm";
 import { probePortListeningOnce } from "../../port-listen";
+import { rootOrDegrade } from "../../privilege";
 import {
   collapseByHost,
   extractBlocks,
@@ -669,7 +670,13 @@ async function proveNoIngress(executor: CommandExecutor): Promise<boolean> {
     // host-network containers, and stopped Docker edge port declarations.
     // Only a successful, explicit proof permits an empty inventory. Shell or
     // Docker errors never look like the success marker.
-    const proof = await executor.exec(`set -eu
+    const inspection = await rootOrDegrade(executor, {
+      purpose: "Inspecting dormant ingress",
+      consequence: "The absence of existing routes cannot be verified.",
+      report: (message) => observeCaughtError(new Error(message), "adapters/system/proxy/import/nginx"),
+    });
+    const proof = await inspection.exec(`set -eu
+[ "$(id -u)" = 0 ] || exit 1
 for binary in openresty nginx caddy traefik haproxy apache2 httpd; do
   if command -v "$binary" >/dev/null 2>&1; then exit 1; fi
 done
