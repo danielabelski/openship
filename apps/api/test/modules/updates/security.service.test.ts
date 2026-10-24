@@ -15,6 +15,8 @@ import {
   reconcileSecurityRefreshes,
   scanSecurityAdvisories,
 } from "@repo/platform/engine/modules/updates/security.service";
+import { securityOverview } from "@repo/platform/engine/modules/updates/security-overview";
+import { securityProbeKey } from "@repo/platform/engine/modules/updates/security-inventory";
 import { assertSecurityRefreshConfiguration } from "@repo/platform/engine/modules/updates/security-refresh-guard";
 import { notification } from "@repo/platform/engine/lib/notification-dispatcher";
 import { notificationPreferenceAllows } from "@repo/platform/engine/lib/notification-preferences";
@@ -85,21 +87,24 @@ beforeEach(() => {
     },
     stale: false,
     error: null,
+    checkedAt: new Date().toISOString(),
+    nextCheckAt: null,
     release: { latest: null, manifest: null },
   });
 });
-async function fixture() {
-  const owner = await seedOwner();
+async function fixture(owner?: Awaited<ReturnType<typeof seedOwner>>) {
+  owner ??= await seedOwner();
+  const slug = `security-${crypto.randomUUID()}`;
   const group = await repos.projectGroup.create({
     organizationId: owner.orgId,
     name: "Security",
-    slug: `security-${owner.userId}`,
+    slug,
   });
   const project = await repos.project.create({
     organizationId: owner.orgId,
     groupId: group.id,
     name: "Security",
-    slug: `security-${owner.userId}`,
+    slug,
     framework: "docker-compose",
     gitProvider: "upload",
     runtimeMode: "docker",
@@ -147,6 +152,7 @@ async function fixture() {
     ],
     runtimes: [],
     unknownServices: [],
+    probeKey: securityProbeKey((await h.feed()).security.advisories),
   };
   await repos.securityAdvisory.saveInventory(
     project.id,
@@ -174,6 +180,68 @@ async function fixture() {
 }
 
 describe("security operations", () => {
+  it("aggregates only authorized current observations, without running a deployment or registry check", async () => {
+    const f = await fixture(),
+      other = await fixture();
+    const hidden = await fixture(f.owner);
+    const direct = await securityOverview(f.ctx, await h.feed());
+    await getPlatformKernel().updates.advisories(f.ctx);
+    const result = await f.client.updates.advisories();
+    expect(result.overview).toEqual(direct);
+    expect(result.overview.projects.map((p) => p.projectId).sort()).toEqual(
+      [f.project.id, hidden.project.id].sort(),
+    );
+    expect(result.overview.projects[0].findings[0]).toMatchObject({
+      id: notice.id,
+      serviceName: "web",
+    });
+    expect(JSON.stringify(result.overview)).not.toContain(other.project.id);
+    const feed = await h.feed();
+    await db
+      .update(schema.member)
+      .set({ role: "restricted" })
+      .where(eq(schema.member.userId, f.owner.userId));
+    const restricted = { ...f.ctx, role: "restricted" as const };
+    expect(await securityOverview(restricted, feed)).toEqual({
+      projects: [],
+      pendingProjects: 0,
+      unknownProjects: 0,
+    });
+    await repos.resourceGrant.upsert({
+      organizationId: f.owner.orgId,
+      userId: f.owner.userId,
+      resourceType: "project",
+      resourceId: f.project.id,
+      permissions: ["read"],
+      grantedByUserId: f.owner.userId,
+    });
+    expect((await securityOverview(restricted, feed)).projects.map((p) => p.projectId)).toEqual([
+      f.project.id,
+    ]);
+    const stale = await securityOverview(f.ctx, { ...feed, stale: true });
+    expect(stale.projects[0].findings[0].canRefresh).toBe(false);
+    const replacement = await repos.deployment.create({
+      projectId: f.project.id,
+      organizationId: f.owner.orgId,
+      branch: "main",
+      status: "ready",
+    });
+    await repos.project.update(f.project.id, { activeDeploymentId: replacement.id });
+    const after = await securityOverview(restricted, feed);
+    expect(after.pendingProjects).toBe(1);
+    expect(after.projects).toEqual([
+      expect.objectContaining({ projectId: f.project.id, findings: [], checkedAt: null }),
+    ]);
+    // Consent remains available globally after a warning clears, or the service stops.
+    await repos.securityAdvisory.policy(f.project.id, f.owner.orgId, f.owner.userId, true);
+    await repos.project.update(f.project.id, { activeDeploymentId: null });
+    expect((await securityOverview(restricted, { ...feed, security: null })).projects).toEqual([
+      expect.objectContaining({ projectId: f.project.id, autoRefresh: true, findings: [] }),
+    ]);
+    expect(h.deploy).not.toHaveBeenCalled();
+    expect(h.digest).not.toHaveBeenCalled();
+  });
+
   it("uses the same authorization and result through native and HTTP clients", async () => {
     const f = await fixture();
     const user = (await repos.user.findById(f.owner.userId))!;

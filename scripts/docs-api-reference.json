@@ -2433,7 +2433,7 @@
     "updates.advisories": {
       "page": "updates",
       "section": "Operations",
-      "description": "Read the shared cached release and signed security advisory feeds.",
+      "description": "Read the shared release/security feeds and authorized workspace findings from current cached observations.",
       "route": "GET /api/updates/advisories"
     },
     "updates.checkSecurity": {

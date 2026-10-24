@@ -75,6 +75,11 @@ export function createSecurityAdvisoryRepo(db: Database) {
         where: eq(projectSecurity.projectId, projectId),
       });
     },
+    async listByOrganization(organizationId: string) {
+      return db.query.projectSecurity.findMany({
+        where: eq(projectSecurity.organizationId, organizationId),
+      });
+    },
     async saveInventory(
       projectId: string,
       organizationId: string,

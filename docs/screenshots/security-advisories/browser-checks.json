@@ -2,14 +2,17 @@
   "fixture": true,
   "noRealApiWrites": true,
   "checks": [
-    "notice expands",
+    "root banner appears on Home without opening a project",
+    "review opens affected apps from the banner",
     "auto refresh off by default",
     "desktop and mobile",
     "manual evidence check without deployment",
     "explicit consent",
     "exact apply scope",
     "changed deployment error",
-    "stale feed blocks refresh"
+    "stale feed blocks refresh",
+    "no banner for resolved runtime findings",
+    "consent can be revoked globally after resolution"
   ],
   "errors": [],
   "writes": [
@@ -39,6 +42,13 @@
         "advisoryId": "CVE-2026-111497-node",
         "deploymentId": "deployed-preview",
         "serviceId": "api-preview"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/updates/security-preview/security/policy",
+      "body": {
+        "autoRefresh": false
       }
     }
   ]

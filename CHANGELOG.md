@@ -278,7 +278,10 @@ receive reliability and security fixes. These notes cover changes since 0.9.3.
   signed advisory feed and match affected image digests or observed runtime
   versions. New runtime rules, deployment changes and Check again refresh bounded
   container observations; ordinary polling reuses one current observation per
-  project. Missing evidence stays unknown. Initial notices cover Node.js/Bun
+  project. Findings appear in the existing global critical/update banner with a
+  shared affected-app review; no project visit is needed. The banner reads cached,
+  workspace-authorized evidence without probing containers. Missing evidence stays
+  unknown. Initial notices cover Node.js/Bun
   Brotli fixes and PHP's October security guidance, including a separate manual
   configuration warning that an image update alone cannot clear.
 - **Apply reviewed patches through the deployment pipeline** — Refresh images &

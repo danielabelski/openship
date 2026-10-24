@@ -188,7 +188,24 @@ it("inspects on a newly published advisory, delivers once, and clears it only af
   expect(await deliveries()).toEqual([]);
 
   await publish([notice]);
+  // The root banner does not execute commands while matching a new feed.
+  const pending = await client.updates.advisories();
+  expect(pending.overview.pendingProjects).toBe(1);
+  expect(pending.overview.projects).toEqual([
+    expect.objectContaining({ projectId: project.id, checkedAt: null, findings: [] }),
+  ]);
+  expect(h.probe).not.toHaveBeenCalled();
   await scanSecurityAdvisories();
+  const global = await client.updates.advisories();
+  expect(global.overview.projects).toEqual([
+    expect.objectContaining({
+      projectId: project.id,
+      name: project.name,
+      findings: [expect.objectContaining({ id: notice.id, evidence: ["node 22.23.3"] })],
+    }),
+  ]);
+  const privateRead = await app.request("/api/updates/advisories", { headers: other.auth });
+  expect((await privateRead.json()).data.overview.projects).toEqual([]);
   const affected = await client.updates.security(project.id);
   expect(affected.findings).toEqual([
     expect.objectContaining({
@@ -261,6 +278,9 @@ it("inspects on a newly published advisory, delivers once, and clears it only af
   const patched = await client.updates.security(project.id);
   expect(patched.deploymentId).toBe(replacement.id);
   expect(patched.findings).toEqual([]);
+  expect((await client.updates.advisories()).overview.projects).toEqual([
+    expect.objectContaining({ projectId: project.id, findings: [], checkedAt: expect.any(String) }),
+  ]);
   expect(h.probe).toHaveBeenCalledTimes(3);
   const stale = await app.request(`/api/updates/${project.id}/security/apply`, {
     method: "POST",

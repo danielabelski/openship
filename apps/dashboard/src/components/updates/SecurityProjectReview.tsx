@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectSecurityResult } from "@repo/contracts";
-import { SECURITY_FEED_SOURCE } from "@repo/core";
 import { useI18n } from "@/components/i18n-provider";
 import { useCloudResourceKey } from "@/context/CloudResourceContext";
 import { useToast } from "@/context/ToastContext";
@@ -12,14 +11,20 @@ import { updatesApi } from "@/lib/api/updates";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/Switch";
 
-/** Same evidence and action on service details and the project's deployment page. */
-export function RuntimeSecurityNotice({
+/** One affected app inside the global advisory review; actions stay resource-scoped. */
+export function SecurityProjectReview({
   projectId,
   serviceId,
   revision,
   workspaceId,
+  name,
+  initialResult,
+  onChecked,
 }: {
   projectId: string;
+  name?: string;
+  initialResult?: ProjectSecurityResult;
+  onChecked?: () => void;
   serviceId?: string;
   revision?: string | null;
   workspaceId?: string | null;
@@ -32,7 +37,7 @@ export function RuntimeSecurityNotice({
   const latest = useRef(identity);
   latest.current = identity;
   const [state, setState] = useState<{ identity: string; data: ProjectSecurityResult } | null>(
-    null,
+    initialResult ? { identity, data: initialResult } : null,
   );
   const [policyBusy, setPolicyBusy] = useState(false);
   const [failedIdentity, setFailedIdentity] = useState<string | null>(null);
@@ -41,6 +46,9 @@ export function RuntimeSecurityNotice({
   const [checking, setChecking] = useState(false);
   const requestGeneration = useRef(0);
   const pendingCheck = useRef(false);
+  useEffect(() => {
+    if (initialResult) setState({ identity, data: initialResult });
+  }, [identity, initialResult]);
   const check = useCallback(
     async (refresh = false) => {
       if (pendingCheck.current || (!refresh && document.visibilityState === "hidden")) return;
@@ -61,6 +69,7 @@ export function RuntimeSecurityNotice({
         ) {
           setState({ identity, data });
           setFailedIdentity(null);
+          if (refresh) onChecked?.();
         }
       } catch (error) {
         if (
@@ -78,19 +87,20 @@ export function RuntimeSecurityNotice({
         }
       }
     },
-    [identity, projectId, showToast],
+    [identity, projectId, showToast, onChecked],
   );
   useEffect(() => {
-    void check();
+    if (!initialResult) void check();
     const timer = setInterval(() => void check(), 5 * 60_000);
     return () => {
       requestGeneration.current++;
       pendingCheck.current = false;
       clearInterval(timer);
     };
-  }, [check]);
+  }, [check, initialResult]);
   const data = state?.identity === identity ? state.data : null;
-  const unavailable = !data || data.feedStale || !!data.feedError || failedIdentity === identity;
+  const unavailable =
+    !data?.checkedAt || data.feedStale || !!data.feedError || failedIdentity === identity;
   const findings =
     data?.findings.filter((item) => !serviceId || item.serviceId === serviceId) ?? [];
   const changePolicy = async (value: boolean) => {
@@ -99,12 +109,14 @@ export function RuntimeSecurityNotice({
     setPolicyBusy(true);
     try {
       const result = await updatesApi.securityPolicy(projectId, value);
-      if (latest.current === identity && scope === getApiRequestScopeVersion())
+      if (latest.current === identity && scope === getApiRequestScopeVersion()) {
         setState((previous) =>
           previous?.identity === identity
             ? { ...previous, data: { ...previous.data, autoRefresh: result.data.autoRefresh } }
             : previous,
         );
+        onChecked?.();
+      }
     } catch (error) {
       if (latest.current === identity && scope === getApiRequestScopeVersion())
         showToast(getApiErrorMessage(error), "error");
@@ -115,13 +127,15 @@ export function RuntimeSecurityNotice({
   return (
     <details className="rounded-2xl bg-card p-4" open={findings.length > 0 ? true : undefined}>
       <summary className="cursor-pointer text-sm font-medium text-foreground">
-        {copy.title}
+        {name ?? copy.title}
         {findings.length > 0 && <span className="ms-2 text-warning">{findings.length}</span>}
       </summary>
       <div className="mt-4 space-y-4">
-        <p className="text-sm text-muted-foreground">
-          {unavailable ? copy.unavailable : findings.length ? copy.affected : copy.noMatches}
-        </p>
+        {(unavailable || !findings.length) && (
+          <p className="text-sm text-muted-foreground">
+            {unavailable ? copy.unavailable : copy.noMatches}
+          </p>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           {data?.checkedAt && (
             <p className="text-xs text-muted-foreground">
@@ -202,17 +216,6 @@ export function RuntimeSecurityNotice({
             />
           </div>
         )}
-        <p className="text-xs text-muted-foreground">
-          {copy.notifications}{" "}
-          <a
-            href={SECURITY_FEED_SOURCE}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-4"
-          >
-            {copy.publicFeed}
-          </a>
-        </p>
       </div>
     </details>
   );

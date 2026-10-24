@@ -3,7 +3,7 @@ import { audit, operationAuditContext } from "../../lib/audit-emitter";
 import * as service from "./updates.service";
 import { updateProjectRuntime } from "./runtime-update";
 import { checkProjectRuntimeImages } from "./runtime-image-check";
-import { getAdvisoryFeed } from "./advisory-feed";
+import { organizationAdvisories } from "./security-overview";
 import {
   projectSecurityStatus,
   setProjectSecurityPolicy,
@@ -11,7 +11,7 @@ import {
 } from "./security.service";
 export const updatesDependencies: UpdateDependencies = {
   collection: {
-    advisories: getAdvisoryFeed,
+    advisories: organizationAdvisories,
     list: service.listOrganizationUpdates,
     async scan(ctx) {
       const result = await service.scanOrganizationUpdates(ctx, ctx.organizationId);

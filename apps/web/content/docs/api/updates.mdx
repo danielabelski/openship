@@ -14,7 +14,10 @@ Openship installation. Existing verified notification channels receive matching
 security alerts by default; Settings → Notifications controls each channel.
 
 ```ts
+// Global feed and affected apps, restricted to the current workspace and grants.
+// This read uses current cached observations; it never runs container commands.
 const feed = await ship.updates.advisories();
+console.log(feed.overview.projects, feed.overview.pendingProjects, feed.overview.unknownProjects);
 const security = await ship.updates.security("proj_123");
 console.log(security.findings, security.unknownServices, security.feedStale);
 
@@ -221,7 +224,7 @@ A changed digest describes image content, not a security remediation guarantee.
 | Apply an available update to the specified project ID. | `updates.apply(id)` | `POST /api/updates/:projectId/apply`<br />`project:write` |
 | Refresh configured runtime images and rebuild selected services at the deployed source version. | `updates.updateRuntime(id, input?)` | `POST /api/updates/:projectId/runtime`<br />`project:write` |
 | Compare deployed image and recorded base-image digests with the registry. | `updates.checkRuntime(id, input?)` | `POST /api/updates/:projectId/runtime/check`<br />`project:read` |
-| Read the shared cached release and signed security advisory feeds. | `updates.advisories()` | `GET /api/updates/advisories`<br />`updates:read` |
+| Read the shared release/security feeds and authorized workspace findings from current cached observations. | `updates.advisories()` | `GET /api/updates/advisories`<br />`updates:read` |
 | Refresh isolated runtime observations and match current verified advisories. | `updates.checkSecurity(id)` | `POST /api/updates/:projectId/security/check`<br />`project:read` |
 | Match public security advisories against scoped deployment evidence. | `updates.security(id)` | `GET /api/updates/:projectId/security`<br />`project:read` |
 | Opt in or out of automatic verified image patches; disabled by default. | `updates.securityPolicy(id, input)` | `PUT /api/updates/:projectId/security/policy`<br />`project:write` |

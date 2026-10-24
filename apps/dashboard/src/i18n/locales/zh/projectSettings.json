@@ -1254,6 +1254,8 @@
     "pinned": "镜像已通过摘要固定。请编辑配置的引用以更新镜像。"
   },
   "securityAdvisories": {
+    "reviewApps": "查看受影响的应用（{count}）",
+    "pendingApps": "{count} 个应用正在等待检查。结果将自动显示。",
     "checkAgain": "重新检查",
     "checking": "检查中…",
     "title": "安全公告",

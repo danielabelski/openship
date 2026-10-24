@@ -20,7 +20,7 @@ r.get(
     tag: "updates:read",
     mcp: {
       description:
-        "Read the cached public release and signed security feeds. Respects GitHub polling and backoff.",
+        "Read the shared release/security feeds and authorized workspace findings from current cached observations. Does not execute container commands; respects feed polling and backoff.",
     },
   },
   ctrl.advisories,
@@ -41,6 +41,7 @@ r.post(
   "/:projectId/security/check",
   {
     tag: "project:read",
+    readOnly: true,
     ids: { project: "projectId" },
     mcp: {
       description:

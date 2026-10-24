@@ -42,9 +42,12 @@ the existing compact recommendation notice and direct redeploy action; unknown b
 reported current. Record image identities in deployment metadata without executing interpreter
 probes. Cache clearing only clears cache; it never schedules a future runtime update. Restart and
 environment refresh do not imply an image update or automatic security coverage.
-Security advisories reuse those deployment actions and appear in one shared,
-compact disclosure on project Deployments and service details. Show detected
-evidence, unknown/stale coverage, upstream guidance and the last inspection time.
+Security advisories reuse those deployment actions and the existing root UpdateCenter
+banner. **Review affected apps** opens a shared dialog; do not repeat notices in
+project Deployments or service panels. Group evidence and actions by affected app
+inside the dialog. Show unknown/stale coverage, upstream guidance and inspection time.
+Reading the root banner aggregates current observations without container exec;
+new/changed rules are inspected by the bounded background job.
 Automatic security refresh is an explicit, off-by-default project switch with
 its limited scope explained beside it. Keep per-channel security alert controls
 in Settings → Notifications. Runtime security checks may use cached, bounded

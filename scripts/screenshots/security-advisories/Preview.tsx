@@ -1,53 +1,60 @@
 "use client";
 
 import { Logo } from "@/components/logo";
-import { RuntimeSecurityNotice } from "@/components/project-settings/RuntimeSecurityNotice";
-import { Button } from "@/components/ui/button";
-import { Tabs } from "@/components/ui/Tabs";
+import { UpdateCenter } from "@/components/updates/UpdateCenter";
+import { useSearchParams } from "next/navigation";
+import { SecurityAdvisorySettings } from "@/app/(dashboard)/settings/_components/SecurityAdvisorySettings";
+import { Icon } from "@repo/ui/icons";
 
-/** Real product component; capture.mjs supplies synthetic API responses. */
+/** Real root update banner and dialog; capture.mjs supplies synthetic API responses. */
 export default function Preview() {
+  const settings = useSearchParams().get("settings") === "1";
   return (
-    <main className="min-h-screen bg-background p-5 text-foreground sm:p-10">
-      <div className="mx-auto max-w-5xl space-y-7" data-security-capture>
-        <header className="flex flex-wrap items-center justify-between gap-4">
+    <main className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto max-w-6xl" data-security-capture>
+        <header className="flex flex-wrap items-center justify-between gap-4 px-6 pt-8">
           <div className="flex items-center gap-3 text-lg font-medium">
-            <Logo size={28} />
-            OpenShip
+            <Logo size={28} /> OpenShip
           </div>
           <p className="text-xs text-muted-foreground">Preview · sample application data</p>
         </header>
-        <div>
-          <p className="mb-3 text-sm text-muted-foreground">
-            Projects / Commerce API / Deployments
-          </p>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-medium">Commerce API</h1>
-              <span className="rounded-full bg-card px-3 py-1 text-xs text-muted-foreground">
-                Production
-              </span>
-            </div>
-            <Button variant="secondary">Redeploy</Button>
-          </div>
-        </div>
-        <Tabs
-          tabs={[
-            { key: "overview", label: "Overview" },
-            { key: "deployments", label: "Deployments" },
-            { key: "services", label: "Apps & Services" },
-          ]}
-          value="deployments"
-          onChange={() => {}}
-        />
-        <RuntimeSecurityNotice projectId="security-preview" revision="deployed-preview" />
-        <div className="flex items-center justify-between gap-4 rounded-2xl bg-card p-5">
-          <div>
-            <p className="text-sm font-medium">Current deployment</p>
-            <p className="mt-1 text-xs text-muted-foreground">main · api · node:22-alpine</p>
-          </div>
-          <span className="text-sm text-success">Running</span>
-        </div>
+        <UpdateCenter />
+        <section className="space-y-6 px-6 py-8">
+          {settings ? (
+            <SecurityAdvisorySettings />
+          ) : (
+            <>
+              <div>
+                <h1 className="text-2xl font-medium">Home</h1>
+                <p className="mt-2 text-sm text-muted-foreground">Your workspace at a glance.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[
+                  ["Projects", "2"],
+                  ["Running services", "3"],
+                  ["Servers", "1"],
+                ].map(([label, count]) => (
+                  <div key={label} className="space-y-3 rounded-2xl bg-card p-5">
+                    <p className="text-sm text-muted-foreground">{label}</p>
+                    <p className="text-2xl font-medium">{count}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-2xl bg-card p-5">
+                <h2 className="mb-5 text-base font-medium">Projects</h2>
+                {["Commerce API", "Storefront"].map((name) => (
+                  <div key={name} className="flex items-center justify-between gap-3 py-4">
+                    <div className="flex items-center gap-3">
+                      <Icon name="folder" className="size-5 text-muted-foreground" />
+                      <span className="text-sm">{name}</span>
+                    </div>
+                    <span className="text-sm text-success">Running</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
       </div>
     </main>
   );

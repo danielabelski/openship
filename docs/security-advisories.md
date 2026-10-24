@@ -6,23 +6,26 @@ default. **Automatic deployment changes are off by default.**
 
 ## What users see
 
-Project → Deployments and each service's details share the same Security advisories
-panel. A notice explains the issue, shows the detected evidence, links to the
-upstream report and offers **Refresh images & redeploy** when applicable. It uses
+Matching runtime advisories appear in the existing root-level critical/update
+banner, on Home and every dashboard page. **Review affected apps** opens one
+dialog with the affected applications, services and detected evidence. You do not
+need to open a project or deployment to discover a warning. The review links to
+the upstream report and offers **Refresh images & redeploy** when applicable. It uses
 the existing deployment pipeline, billing admission, service scope and health
 checks. A mutable tag can be pulled again even when its name has not changed.
 Configured versions and digest pins remain unchanged. A pinned vulnerable image
 requires an explicit configuration change; rebuilding a pinned vulnerable
 Dockerfile does not fix it automatically.
 
-The panel distinguishes confirmed matches, possible tag matches, unavailable
+The review distinguishes confirmed matches, possible tag matches, unavailable
 checks and incomplete runtime coverage. No matches is not an assurance that an
 application has no vulnerabilities. Runtime probes report installed versions;
 they are not cryptographic attestation and cannot establish whether a particular
 application exposes a vulnerable code path.
 
-Settings → Notifications includes **Security advisories**. Each enabled, verified
-notification channel inherits these alerts, including channels added later.
+Settings → Notifications keeps the same **Security advisories** review and per-app
+automatic-refresh controls accessible after a warning is dismissed or resolved.
+Each enabled, verified notification channel inherits these alerts, including channels added later.
 Users can turn individual channels off; administrators can change workspace
 defaults. Membership, resource access, channel ownership and current opt-outs are
 checked again before delivery. Unverified or disabled channels do not receive
@@ -40,6 +43,11 @@ delivery flow. Customer application images and runtimes still receive scoped
 advisories on Cloud, including connected servers. Managed infrastructure does not
 change a pinned application runtime. Those projects also remain notice-only until
 a project writer explicitly enables the limited automatic refresh policy below.
+
+A full instance move retains the same identities, security consent and refresh
+attempts. Individual project imports reset observations and consent, with a preview
+warning; they never carry another owner's automatic-update authority or replay
+source refresh attempts. Public feed caches and polling leases are fetched again.
 
 ## Polling and inventory
 
@@ -72,15 +80,17 @@ container exec calls. Observations occupy one current cache per project, keyed
 by the active deployment and advisory rules; elapsed time alone does not trigger
 another probe. New or changed runtime rules, a different active deployment,
 **Check again**, and pre-patch verification request fresh observations. Unknown
-observations can be retried with **Check again**; they are never reported safe. Each inspection and background sweep has a work budget, so large
-installations can require multiple sweeps. New deployments invalidate inventory.
+observations can be retried with **Check again**; they are never reported safe.
+Each inspection and background sweep has a work budget, so large installations can require multiple sweeps. New deployments invalidate inventory.
 
 ### How a new announcement becomes a finding
 
 1. The shared poller verifies the signed feed, its revision and expiry, then
    stores the verified document. A new feed revision makes projects eligible for
-   evaluation on the next bounded sweep; opening the panel also evaluates the
-   current feed.
+   evaluation on the next bounded sweep. The root feed response aggregates current
+   observations using the same matcher; it never executes a container command.
+   Only authorized projects in the current workspace contribute findings or
+   counts. Changed rules or active deployments are marked pending until inspected.
 2. The evaluator reads the active deployment's existing image receipts
    (`deployment.meta.runtimeImages` and service deployment image digests).
    Runtime versions are inspected on demand and cached in
@@ -95,8 +105,8 @@ installations can require multiple sweeps. New deployments invalidate inventory.
    digests and observed runtime version ranges can confirm a match; a tag alone
    only produces a possible match. An image tag is never treated as a runtime
    version.
-4. Matching findings go through the existing notification queue. Durable keys
-   prevent repeated scans or feed-signature renewals from sending the same notice
+4. Matching findings appear in the global banner and go through the existing
+   notification queue. Durable keys prevent repeated scans or feed-signature renewals from sending the same notice
    again. Updating the advisory's own revision can produce a new notice.
 
 Inspection checks the deployment ID again before saving new evidence. Applying a

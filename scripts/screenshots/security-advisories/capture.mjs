@@ -116,7 +116,26 @@ try {
           code = 409;
           body = { error: "The active deployment changed. Check the advisory again." };
         } else throw new Error(`Unexpected capture write: ${request.method()} ${url.pathname}`);
-      } else if (url.pathname.endsWith("/security")) body = { data: status };
+      } else if (url.pathname.endsWith("/health/env")) {
+        body = { selfHosted: true, deployMode: "docker", authMode: "local", version: "0.9.3" };
+      } else if (url.pathname.endsWith("/updates/advisories")) {
+        body = {
+          data: {
+            release: { latest: null, manifest: { advisories: [] } },
+            security: { ...source, advisories: [advisory] },
+            stale: status.feedStale,
+            error: status.feedError,
+            checkedAt: status.checkedAt,
+            nextCheckAt: null,
+            overview: {
+              projects: [{ ...status, name: "Commerce API", workspaceId: null }],
+              pendingProjects: 0,
+              unknownProjects: 0,
+            },
+          },
+        };
+      } else if (url.pathname.endsWith("/notices")) body = { advisories: [] };
+      else if (url.pathname.endsWith("/security")) body = { data: status };
       return route.fulfill({
         status: code,
         contentType: "application/json",
@@ -135,17 +154,10 @@ try {
     timeout: 120_000,
   });
   const refresh = page.getByRole("button", { name: "Refresh images & redeploy", exact: true });
-  await refresh.waitFor({ timeout: 45_000 });
+  const review = page.getByRole("button", { name: "Review affected apps (1)", exact: true });
+  await review.waitFor({ timeout: 45_000 });
   await page.evaluate(() => document.fonts.ready);
   await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
-  const consent = page.getByRole("switch", {
-    name: "Automatically refresh verified security patches",
-    exact: true,
-  });
-  assert.equal(await consent.getAttribute("aria-checked"), "false");
-  assert.equal(writes.length, 0);
-  assert.equal(await page.locator("details").getAttribute("open"), "");
-  assert.equal(await refresh.isEnabled(), true);
   await page.screenshot({
     path: resolve(output, "advisory-found.png"),
     fullPage: true,
@@ -156,6 +168,29 @@ try {
   await page.screenshot({
     path: resolve(output, "advisory-found-mobile.png"),
     fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1400, height: 1060 });
+  await review.click();
+  await refresh.waitFor();
+  const consent = page.getByRole("switch", {
+    name: "Automatically refresh verified security patches",
+    exact: true,
+  });
+  assert.equal(await consent.getAttribute("aria-checked"), "false");
+  assert.equal(writes.length, 0);
+  assert.equal(await page.locator("details").getAttribute("open"), "");
+  assert.equal(await refresh.isEnabled(), true);
+  await page.screenshot({
+    path: resolve(output, "advisory-review.png"),
+    fullPage: false,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.screenshot({
+    path: resolve(output, "advisory-review-mobile.png"),
+    fullPage: false,
     animations: "disabled",
   });
 
@@ -187,9 +222,26 @@ try {
   );
   status = { ...status, feedStale: true, feedError: "Advisory feed unavailable" };
   await page.reload({ waitUntil: "domcontentloaded" });
+  await review.click();
   await refresh.waitFor();
   assert.equal(await refresh.isDisabled(), true);
   assert.equal(writes.length, 4);
+  // A resolved advisory must not make existing automatic-refresh consent unreachable.
+  status = { ...status, findings: [], autoRefresh: true, feedStale: false, feedError: null };
+  await page.goto(`${origin}/security-advisory-capture?settings=1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.getByRole("button", { name: "Security advisories", exact: true }).click();
+  assert.equal(await review.count(), 0);
+  await page.getByText("Commerce API", { exact: true }).click();
+  await consent.waitFor();
+  assert.equal(await consent.getAttribute("aria-checked"), "true");
+  await consent.click();
+  await page.waitForFunction(
+    () => document.querySelector('[role="switch"]')?.getAttribute("aria-checked") === "false",
+  );
+  assert.equal(writes.length, 5);
+  assert.deepEqual(writes[4].body, { autoRefresh: false });
   assert.deepEqual(errors, []);
   await writeFile(
     resolve(output, "browser-checks.json"),
@@ -198,7 +250,8 @@ try {
         fixture: true,
         noRealApiWrites: true,
         checks: [
-          "notice expands",
+          "root banner appears on Home without opening a project",
+          "review opens affected apps from the banner",
           "auto refresh off by default",
           "desktop and mobile",
           "manual evidence check without deployment",
@@ -206,6 +259,8 @@ try {
           "exact apply scope",
           "changed deployment error",
           "stale feed blocks refresh",
+          "no banner for resolved runtime findings",
+          "consent can be revoked globally after resolution",
         ],
         errors,
         writes,
@@ -214,7 +269,7 @@ try {
       2,
     ) + "\n",
   );
-  console.log(`Captured the real advisory component and verified 8 browser checks in ${output}`);
+  console.log(`Captured the real advisory component and verified 11 browser checks in ${output}`);
 } catch (error) {
   if (page) {
     console.error((await page.locator("body").innerText()).slice(0, 2500));

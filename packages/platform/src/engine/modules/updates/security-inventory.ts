@@ -28,6 +28,26 @@ export interface SecurityInventory {
 
 const pending = new Map<string, Promise<SecurityInventory>>();
 
+function runtimeRules(advisories: readonly SecurityAdvisory[]) {
+  return advisories.flatMap((advisory) =>
+    advisory.targets
+      .filter((target) => target.kind === "runtime")
+      .map((target) => ({ id: advisory.id, revision: advisory.revision, ...target })),
+  );
+}
+
+export function securityProbeKey(advisories: readonly SecurityAdvisory[]): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        runtimeRules(advisories)
+          .map((rule) => JSON.stringify(rule))
+          .sort(),
+      ),
+    )
+    .digest("hex");
+}
+
 export async function projectSecurityInventory(
   ctx: ExecutionContext,
   projectId: string,
@@ -45,14 +65,7 @@ export async function projectSecurityInventory(
     checkedAt: null,
   };
   if (!active || project.deletionInProgress) return empty;
-  const rules = advisories.flatMap((advisory) =>
-    advisory.targets
-      .filter((target) => target.kind === "runtime")
-      .map((target) => ({ id: advisory.id, revision: advisory.revision, ...target })),
-  );
-  const probeKey = createHash("sha256")
-    .update(JSON.stringify(rules.map((rule) => JSON.stringify(rule)).sort()))
-    .digest("hex");
+  const probeKey = securityProbeKey(advisories);
   const key = `${ctx.organizationId}:${projectId}:${active.id}:${probeKey}`;
   const stored = await repos.securityAdvisory.project(projectId);
   const running = pending.get(key);
@@ -60,7 +73,7 @@ export async function projectSecurityInventory(
   const cached = stored?.inventory as SecurityInventory | null;
   if (!refresh && stored?.deploymentId === active.id && cached?.probeKey === probeKey)
     return cached;
-  const runtimes = [...new Set(rules.map((rule) => rule.runtime))];
+  const runtimes = [...new Set(runtimeRules(advisories).map((rule) => rule.runtime))];
   const task = readSecurityInventory(ctx, projectId, active.id, probeKey, runtimes);
   pending.set(key, task);
   try {

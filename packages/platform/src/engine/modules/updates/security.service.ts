@@ -27,6 +27,7 @@ import { reportCaughtError } from "@repo/core/diagnostics";
 import { getAdvisoryFeed, type AdvisoryFeedState } from "./advisory-feed";
 import { projectSecurityInventory } from "./security-inventory";
 import { updateProjectRuntime } from "./runtime-update";
+import { buildProjectSecurityResult } from "./security-status";
 
 const key = (...parts: (string | number | null)[]) =>
   createHash("sha256").update(JSON.stringify(parts)).digest("hex");
@@ -98,47 +99,15 @@ export async function projectSecurityStatus(
     upstream.security?.advisories ?? [],
     refresh,
   );
-  const matched = upstream.security
-    ? matchSecurityAdvisories(upstream.security, inventory.images, inventory.runtimes)
-    : [];
-  const findings = new Map<string, ProjectSecurityResult["findings"][number]>();
-  const services = new Map(
-    (await repos.service.listByProject(projectId)).map((service) => [service.id, service.name]),
-  );
-  for (const match of matched) {
-    const id = key(match.advisory.id, match.serviceId);
-    const previous = findings.get(id);
-    if (previous) {
-      previous.evidence.push(match.evidence);
-      if (match.confidence === "confirmed") previous.confidence = "confirmed";
-    } else
-      findings.set(id, {
-        id: match.advisory.id,
-        revision: match.advisory.revision,
-        title: match.advisory.title,
-        message: match.advisory.message,
-        severity: match.advisory.severity,
-        url: match.advisory.url,
-        serviceId: match.serviceId,
-        serviceName: match.serviceId ? (services.get(match.serviceId) ?? null) : null,
-        evidence: [match.evidence],
-        confidence: match.confidence,
-        canRefresh:
-          !upstream.stale &&
-          match.advisory.action === "refresh-images" &&
-          (!match.image || isMutableImageRef(match.image.ref)),
-      });
-  }
-  return {
+  return buildProjectSecurityResult(
     projectId,
-    deploymentId: inventory.deploymentId,
-    checkedAt: inventory.checkedAt,
-    autoRefresh: state?.autoRefresh ?? false,
-    feedStale: upstream.stale,
-    feedError: upstream.error,
-    unknownServices: inventory.unknownServices,
-    findings: [...findings.values()],
-  };
+    inventory,
+    upstream,
+    state?.autoRefresh ?? false,
+    new Map(
+      (await repos.service.listByProject(projectId)).map((service) => [service.id, service.name]),
+    ),
+  );
 }
 
 export async function setProjectSecurityPolicy(
@@ -356,7 +325,7 @@ export async function scanSecurityAdvisories() {
           idempotencyKey: `security:${key(project.id, finding.id, finding.revision, finding.serviceId)}`,
           payload: {
             projectName: project.name,
-            message: `${finding.title}\n${finding.message}\nDetected: ${finding.evidence.join(", ")}\n${finding.canRefresh ? "Open the project's Deployments tab to review and refresh runtime images." : "Review the advisory and update the service configuration."}`,
+            message: `${finding.title}\n${finding.message}\nDetected: ${finding.evidence.join(", ")}\n${finding.canRefresh ? "Open the security banner in Openship and choose Review affected apps to inspect and refresh runtime images." : "Review the advisory and update the service configuration."}`,
             serviceName: finding.serviceName,
             url: finding.url,
             advisoryId: finding.id,

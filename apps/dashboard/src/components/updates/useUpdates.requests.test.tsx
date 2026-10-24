@@ -3,6 +3,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseUpdates } from "./useUpdates";
+const account = vi.hoisted(() => ({ key: "workspace-a", version: 0 }));
+vi.mock("@/context/CloudResourceContext", () => ({ useCloudResourceKey: () => account.key }));
+vi.mock("@/lib/api/client", () => ({ getApiRequestScopeVersion: () => account.version }));
 const deployment = vi.hoisted(() => ({ selfHosted: true, version: "0.1.0" }));
 vi.mock("@/hooks/useDeploymentInfo", () => ({
   useDeploymentInfo: () => deployment,
@@ -13,9 +16,22 @@ const snapshot = {
   latest: { tag: "v99.0.0", version: "99.0.0", notes: "Product notes." },
   manifest: { advisories: [] },
 };
-const feed = vi.hoisted(() => ({ check: vi.fn(), security: null as unknown }));
+const feed = vi.hoisted(() => ({
+  check: vi.fn(),
+  security: null as unknown,
+  overview: { projects: [], pendingProjects: 0, unknownProjects: 0 } as unknown,
+}));
 const check = feed.check;
-vi.mock("@/lib/api/updates", () => ({ updatesApi: { advisories: () => feed.check().then((release: unknown) => ({ data: { release, security: feed.security, stale: false } })) } }));
+vi.mock("@/lib/api/updates", () => ({
+  updatesApi: {
+    advisories: () => {
+      const { security, overview } = feed;
+      return feed
+        .check()
+        .then((release: unknown) => ({ data: { release, security, overview, stale: false } }));
+    },
+  },
+}));
 const fetcher = vi.fn();
 const persist = vi.fn();
 const critical = {
@@ -49,6 +65,9 @@ const releaseRequests = () => fetcher.mock.calls.filter(([url]) => String(url).i
 beforeEach(async () => {
   vi.resetModules();
   deployment.selfHosted = true;
+  account.key = "workspace-a";
+  account.version = 0;
+  feed.overview = { projects: [], pendingProjects: 0, unknownProjects: 0 };
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", fetcher);
   fetcher.mockReset().mockImplementation(async (url) => {
@@ -104,7 +123,11 @@ describe("advisory dismissal within an app session", () => {
   it("does not resurrect a notice when an older in-flight load finishes", async () => {
     await mount();
     let finish!: (value: unknown) => void;
-    check.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    check.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
     await act(async () => state[1].refresh());
     await act(async () => state[0].dismissAdvisory(critical.id));
     await act(async () => finish({ ...snapshot, manifest: { advisories: [critical] } }));
@@ -131,9 +154,11 @@ describe("advisory dismissal within an app session", () => {
     delete window.desktop;
     deployment.selfHosted = false;
     // Every consumer receives its own readable response body.
-    fetcher.mockImplementation(async () => new Response(JSON.stringify({ advisories: [critical] })));
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify({ advisories: [critical] })),
+    );
     await mount();
-    expect(check).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledOnce();
     expect(state[0].state?.advisories).toEqual([critical]);
     await act(async () => state[0].dismissAdvisory(critical.id));
     await act(async () => state[1].reload());
@@ -162,26 +187,37 @@ afterEach(async () => {
 });
 
 describe("release check requests (#661)", () => {
-  it.each(["desktop", "selfhosted", "cloud"])("scopes signed control-plane advisories correctly in %s", async (mode) => {
-    if (mode !== "desktop") delete window.desktop;
-    deployment.selfHosted = mode !== "cloud";
-    feed.security = { advisories: [{
-      id: "control-plane-patch", revision: 1, title: "Update Openship",
-      message: "Install the patched control plane.", severity: "high",
-      url: "https://example.com/security", targets: [{ kind: "platform", affected: ">=0.0.0" }],
-    }] };
-    await mount();
-    if (mode === "cloud") {
-      expect(check).not.toHaveBeenCalled();
-      expect(state[0].state?.updateAvailable).toBe(false);
-      expect(state[0].state?.advisories).toEqual([]);
-    } else {
-      expect(check).toHaveBeenCalledOnce();
-      expect(state[0].state?.advisories).toEqual([
-        expect.objectContaining({ id: "security:control-plane-patch:1" }),
-      ]);
-    }
-  });
+  it.each(["desktop", "selfhosted", "cloud"])(
+    "scopes signed control-plane advisories correctly in %s",
+    async (mode) => {
+      if (mode !== "desktop") delete window.desktop;
+      deployment.selfHosted = mode !== "cloud";
+      feed.security = {
+        advisories: [
+          {
+            id: "control-plane-patch",
+            revision: 1,
+            title: "Update Openship",
+            message: "Install the patched control plane.",
+            severity: "high",
+            url: "https://example.com/security",
+            targets: [{ kind: "platform", affected: ">=0.0.0" }],
+          },
+        ],
+      };
+      await mount();
+      if (mode === "cloud") {
+        expect(check).toHaveBeenCalledOnce();
+        expect(state[0].state?.updateAvailable).toBe(false);
+        expect(state[0].state?.advisories).toEqual([]);
+      } else {
+        expect(check).toHaveBeenCalledOnce();
+        expect(state[0].state?.advisories).toEqual([
+          expect.objectContaining({ id: "security:control-plane-patch:1" }),
+        ]);
+      }
+    },
+  );
 
   it("uses one backend snapshot for multiple desktop consumers without a renderer GitHub fetch", async () => {
     await mount();
@@ -219,5 +255,88 @@ describe("release check requests (#661)", () => {
     });
     expect(check).toHaveBeenCalledTimes(2);
     expect(releaseRequests()).toHaveLength(0);
+  });
+});
+
+const affectedOverview = {
+  projects: [
+    {
+      projectId: "app-a",
+      name: "Private application",
+      deploymentId: "deployed-a",
+      findings: [
+        {
+          id: "runtime-fix",
+          revision: 1,
+          title: "Affected runtime",
+          message: "Patch this runtime.",
+          severity: "critical",
+          url: "https://example.com/security",
+          serviceId: "api",
+          canRefresh: true,
+        },
+      ],
+    },
+  ],
+  pendingProjects: 0,
+  unknownProjects: 0,
+};
+describe("global runtime advisories", () => {
+  it.each(["desktop", "selfhosted", "cloud"])(
+    "shows workload findings through the root feed in %s",
+    async (mode) => {
+      if (mode !== "desktop") delete window.desktop;
+      deployment.selfHosted = mode !== "cloud";
+      feed.overview = affectedOverview;
+      await mount();
+      expect(state[0].state?.advisories).toEqual([
+        expect.objectContaining({ title: "Affected runtime", severity: "critical" }),
+      ]);
+      expect(state[0].securityOverview).toEqual(affectedOverview);
+      expect(state[0].runtimeAdvisories).toHaveLength(1);
+      expect(check).toHaveBeenCalledOnce();
+      expect(releaseRequests()).toHaveLength(0);
+    },
+  );
+  it("does not cache or accept a late workload response across accounts", async () => {
+    feed.overview = affectedOverview;
+    let finish!: (value: unknown) => void;
+    check.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await mount();
+    account.key = "workspace-b";
+    account.version++;
+    feed.overview = { projects: [], pendingProjects: 0, unknownProjects: 0 };
+    await mount();
+    expect(state[0].securityOverview.projects).toEqual([]);
+    await act(async () => finish(snapshot));
+    expect(state[0].securityOverview.projects).toEqual([]);
+    expect(state[0].state?.advisories).toEqual([]);
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+  it("clears displayed workload findings immediately on account changes", async () => {
+    feed.overview = affectedOverview;
+    await mount();
+    expect(state[0].securityOverview.projects).toHaveLength(1);
+    account.key = "workspace-b";
+    account.version++;
+    check.mockReturnValue(new Promise(() => {}));
+    await mount();
+    expect(state[0].securityOverview.projects).toEqual([]);
+    expect(state[0].state).toBeNull();
+  });
+  it("retains a warning offline while disabling refresh actions", async () => {
+    feed.overview = affectedOverview;
+    await mount();
+    check.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => state[0].refresh());
+    expect(state[0].state?.advisories).toHaveLength(1);
+    expect(state[0].securityOverview.projects[0]).toMatchObject({
+      feedStale: true,
+      findings: [expect.objectContaining({ canRefresh: false })],
+    });
   });
 });

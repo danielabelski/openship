@@ -1254,6 +1254,8 @@
     "pinned": "イメージはダイジェストで固定されています。更新するには設定した参照を編集してください。"
   },
   "securityAdvisories": {
+    "reviewApps": "影響を受けるアプリを確認（{count}）",
+    "pendingApps": "{count} 個のアプリの確認が保留中です。結果は自動的に表示されます。",
     "checkAgain": "再確認",
     "checking": "確認中…",
     "title": "セキュリティ情報",

@@ -1254,6 +1254,8 @@
     "pinned": "Images are pinned by digest. Edit the configured reference to update them."
   },
   "securityAdvisories": {
+    "reviewApps": "Review affected apps ({count})",
+    "pendingApps": "Checks pending for {count} apps. Results will appear automatically.",
     "checkAgain": "Check again",
     "checking": "Checking…",
     "title": "Security advisories",

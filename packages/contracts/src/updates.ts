@@ -7,14 +7,6 @@ import type {
   ScopedOperations,
 } from "./resource-operations";
 const nullableString = Type.Union([Type.String(), Type.Null()]);
-export const AdvisoryFeedResultSchema = Type.Object({
-  release: Type.Unsafe<ReleaseFeedSnapshot>({ type: "object" }),
-  security: Type.Unsafe<SecurityManifest | null>({ anyOf: [{ type: "object" }, { type: "null" }] }),
-  stale: Type.Boolean(),
-  checkedAt: nullableString,
-  nextCheckAt: nullableString,
-  error: nullableString,
-});
 export const ProjectSecurityResultSchema = Type.Object({
   projectId: Type.String(),
   deploymentId: nullableString,
@@ -38,6 +30,28 @@ export const ProjectSecurityResultSchema = Type.Object({
       canRefresh: Type.Boolean(),
     }),
   ),
+});
+export const SecurityOverviewSchema = Type.Object({
+  /** Authorized active apps and opted-in policies, including unknown/pending observations. */
+  projects: Type.Array(
+    Type.Object({
+      ...ProjectSecurityResultSchema.properties,
+      name: Type.String(),
+      workspaceId: nullableString,
+    }),
+  ),
+  pendingProjects: Type.Integer(),
+  unknownProjects: Type.Integer(),
+});
+export const AdvisoryFeedResultSchema = Type.Object({
+  // Feed parsers validate their content; these must still be executable TypeBox schemas.
+  release: Type.Unsafe<ReleaseFeedSnapshot>(Type.Object({})),
+  security: Type.Unsafe<SecurityManifest | null>(Type.Union([Type.Object({}), Type.Null()])),
+  stale: Type.Boolean(),
+  checkedAt: nullableString,
+  nextCheckAt: nullableString,
+  error: nullableString,
+  overview: SecurityOverviewSchema,
 });
 const RuntimeScopeSchema = Type.Object(
   {
@@ -137,6 +151,7 @@ export const UpdateProjectSchemas = {
 export type ProjectUpdate = Static<typeof ProjectUpdateSchema>;
 export type ProjectSecurityResult = Static<typeof ProjectSecurityResultSchema>;
 export type AdvisoryFeedResult = Static<typeof AdvisoryFeedResultSchema>;
+export type SecurityOverview = Static<typeof SecurityOverviewSchema>;
 export type ApplySecurityInput = Static<typeof UpdateProjectSchemas.applySecurity.input>;
 export type UpdateRuntimeInput = Static<typeof UpdateProjectSchemas.updateRuntime.input>;
 export type RuntimeImageCheckResult = Static<typeof RuntimeImageCheckResultSchema>;

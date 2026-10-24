@@ -1254,6 +1254,8 @@
     "pinned": "As imagens estão fixadas por digest. Edite a referência configurada para atualizá-las."
   },
   "securityAdvisories": {
+    "reviewApps": "Rever apps afetadas ({count})",
+    "pendingApps": "Verificações pendentes para {count} apps. Os resultados aparecerão automaticamente.",
     "checkAgain": "Verificar novamente",
     "checking": "Verificando…",
     "title": "Avisos de segurança",

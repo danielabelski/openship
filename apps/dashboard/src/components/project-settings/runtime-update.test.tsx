@@ -8,7 +8,7 @@ import { ApiError, setApiResourceScope } from "@/lib/api/client";
 import { useRuntimeUpdate } from "@/hooks/useRuntimeUpdate";
 import { RuntimeRedeployMenu } from "./RuntimeRedeployMenu";
 import { RuntimeImageUpdateNotice } from "./RuntimeImageUpdateNotice";
-import { RuntimeSecurityNotice } from "./RuntimeSecurityNotice";
+import { SecurityProjectReview } from "../updates/SecurityProjectReview";
 
 const h = vi.hoisted(() => ({
   update: vi.fn(),
@@ -300,7 +300,7 @@ it("clears old image drift when the active deployment or configuration changes",
 });
 
 it("keeps security patches off by default and sends the reviewed advisory through the runtime flow", async () => {
-  await act(async () => root.render(<RuntimeSecurityNotice projectId="project-a" />));
+  await act(async () => root.render(<SecurityProjectReview projectId="project-a" />));
   expect(
     button(baseDictionary.projectSettings.securityAdvisories.automatic).getAttribute(
       "aria-checked",
@@ -319,7 +319,7 @@ it("keeps security patches off by default and sends the reviewed advisory throug
 it("never shows another workspace's delayed security findings", async () => {
   const pending = deferred<unknown>();
   h.security.mockReturnValueOnce(pending.promise);
-  await act(async () => root.render(<RuntimeSecurityNotice projectId="project-a" />));
+  await act(async () => root.render(<SecurityProjectReview projectId="project-a" />));
   h.resourceKey = "account-two";
   h.security.mockResolvedValue({
     data: {
@@ -333,7 +333,7 @@ it("never shows another workspace's delayed security findings", async () => {
       findings: [],
     },
   });
-  await act(async () => root.render(<RuntimeSecurityNotice projectId="project-b" />));
+  await act(async () => root.render(<SecurityProjectReview projectId="project-b" />));
   await act(async () =>
     pending.resolve({
       data: {
@@ -356,7 +356,7 @@ it("never shows another workspace's delayed security findings", async () => {
 
 it("shows a failed security check without claiming no matching vulnerabilities", async () => {
   h.security.mockRejectedValue(new Error("Disconnected"));
-  await act(async () => root.render(<RuntimeSecurityNotice projectId="project-a" />));
+  await act(async () => root.render(<SecurityProjectReview projectId="project-a" />));
   expect(element.textContent).toContain(
     baseDictionary.projectSettings.securityAdvisories.unavailable,
   );
@@ -379,7 +379,7 @@ it("refreshes runtime observations explicitly without deploying or changing poli
       findings: [],
     },
   });
-  await act(async () => root.render(<RuntimeSecurityNotice projectId="project-a" />));
+  await act(async () => root.render(<SecurityProjectReview projectId="project-a" />));
   await act(async () =>
     button(baseDictionary.projectSettings.securityAdvisories.checkAgain).click(),
   );

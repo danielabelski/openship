@@ -1254,6 +1254,8 @@
     "pinned": "İmajlar özetle sabitlenmiş. Güncellemek için yapılandırılan referansı düzenleyin."
   },
   "securityAdvisories": {
+    "reviewApps": "Etkilenen uygulamaları incele ({count})",
+    "pendingApps": "{count} uygulama için kontroller bekleniyor. Sonuçlar otomatik olarak görünecek.",
     "checkAgain": "Tekrar kontrol et",
     "checking": "Kontrol ediliyor…",
     "title": "Güvenlik bildirimleri",

@@ -1,13 +1,15 @@
 # Runtime security notice
 
-These screenshots render the real `RuntimeSecurityNotice` component with the
-dashboard's Gellix font and dim theme. The surrounding project is sample data;
+These screenshots render the existing root `UpdateCenter` banner and its runtime
+security review dialog with the dashboard's Gellix font and dim theme. The Home
+page contains sample application data;
 the notice uses the public Node.js advisory and a synthetic affected runtime.
 They are UI evidence, not proof that a live application was scanned or patched.
 
 ![A matching runtime security advisory](advisory-found.png)
 
-[Mobile screenshot](advisory-found-mobile.png) · [Browser checks](browser-checks.json)
+[Mobile banner](advisory-found-mobile.png) · [Review dialog](advisory-review.png) ·
+[Mobile review](advisory-review-mobile.png) · [Browser checks](browser-checks.json)
 
 Run the dashboard development server, then:
 
