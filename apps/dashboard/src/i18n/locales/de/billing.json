@@ -249,6 +249,11 @@
     "subtitle": "Verwalte dein Abonnement, deine Nutzung und deine Zahlungsmethoden.",
     "getServer": "Server buchen"
   },
+  "products": {
+    "label": "Abrechnungsoptionen",
+    "cloudDescription": "Hosting & Rechenleistung",
+    "manageDescription": "Eigene Server"
+  },
   "sidebar": {
     "planSuffix": "Tarif {name}",
     "status": "Status",

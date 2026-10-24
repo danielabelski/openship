@@ -249,6 +249,11 @@
     "subtitle": "Aboneliğinizi, kullanımınızı ve ödeme yöntemlerinizi yönetin.",
     "getServer": "Sunucu al"
   },
+  "products": {
+    "label": "Faturalandırma seçenekleri",
+    "cloudDescription": "Barındırma ve işlem gücü",
+    "manageDescription": "Kendi sunucularınız"
+  },
   "sidebar": {
     "planSuffix": "{name} Planı",
     "status": "Durum",

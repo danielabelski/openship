@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { usePathname, useSearchParams, useRouter } from "next/navigation";
-import { Tabs } from "@/components/ui/Tabs";
+import { usePathname, useSearchParams } from "next/navigation";
 import { PageContainer } from "@/components/ui/PageContainer";
 import {
   BillingLink,
@@ -22,20 +21,21 @@ import { newServerBillingHref } from "@/lib/billing-links";
 import { BILLING_TABS } from "./billing-tabs";
 import { BillingTabBar } from "./BillingTabBar";
 import { BillingHeader } from "./BillingHeader";
+import { BillingProductSwitch } from "./BillingProductSwitch";
 import { BillingViewProvider, type BillingView } from "./BillingViewContext";
 import { PendingPaymentsButton } from "@/components/billing/CheckoutRecovery";
 
 /** Persistent route chrome. Only the tab content suspends while its scoped state loads. */
-function BillingProducts() {
-  const pathname = usePathname();
-  const router = useRouter();
-  return <Tabs variant="pills" ariaLabel="Hosting options" value={pathname.endsWith("/manage") ? "manage" : "cloud"}
-    tabs={[{ key: "cloud", label: "Openship Cloud", icon: "cloud", href: "/billing/overview" }, { key: "manage", label: "Your infrastructure", icon: "server", href: "/billing/manage" }]}
-    onChange={value => router.push(value === "manage" ? "/billing/manage" : "/billing/overview")} />;
-}
 export function BillingLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  if (pathname.endsWith("/manage")) return <PageContainer className="space-y-6"><BillingHeader /><BillingProducts />{children}</PageContainer>;
+  if (pathname.endsWith("/manage"))
+    return (
+      <PageContainer className="space-y-6">
+        <BillingHeader />
+        <BillingProductSwitch />
+        {children}
+      </PageContainer>
+    );
   return <CloudBillingLayout>{children}</CloudBillingLayout>;
 }
 function CloudBillingLayout({ children }: { children: React.ReactNode }) {
@@ -127,7 +127,7 @@ function CloudBillingLayout({ children }: { children: React.ReactNode }) {
                     </div>
                   ))}
               </BillingHeader>
-              <BillingProducts />
+              <BillingProductSwitch />
               <BillingTabBar
                 activeTab={activeTab}
                 plansOnly={plansOnly}

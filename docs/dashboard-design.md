@@ -478,6 +478,10 @@ check retryable before starting the move.
   below the comparison, alongside shared capabilities. Keep additional transfer, backup
   and storage terms in a compact disclosure. Follow this with the catalog's Enterprise
   contact card; do not repeat these details inside every plan or in a separate text card.
+- Billing starts with one compact segmented product switch: **Openship Cloud** with
+  **Hosting & compute**, and **Openship Manage** with **Your own servers**. Use one
+  recessed group with a raised selected link, and keep both choices visible on narrow
+  screens. This is product navigation; the existing subscription tabs remain below it.
 - Cloud billing keeps its header and tabs mounted when switching servers. List managed
   servers in the right sidebar on usage and history tabs, reusing the shared destination rows.
   One server is a summary; several servers switch billing directly from the visible list.

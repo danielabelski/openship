@@ -249,6 +249,11 @@
     "subtitle": "管理您的订阅、用量和付款方式。",
     "getServer": "购买服务器"
   },
+  "products": {
+    "label": "计费选项",
+    "cloudDescription": "托管与计算资源",
+    "manageDescription": "自有服务器"
+  },
   "sidebar": {
     "planSuffix": "{name} 套餐",
     "status": "状态",

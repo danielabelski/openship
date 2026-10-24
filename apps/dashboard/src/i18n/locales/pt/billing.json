@@ -249,6 +249,11 @@
     "subtitle": "Gerencie sua assinatura, uso e formas de pagamento.",
     "getServer": "Obter servidor"
   },
+  "products": {
+    "label": "Opções de cobrança",
+    "cloudDescription": "Hospedagem e computação",
+    "manageDescription": "Seus próprios servidores"
+  },
   "sidebar": {
     "planSuffix": "Plano {name}",
     "status": "Status",

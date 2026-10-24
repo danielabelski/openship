@@ -249,6 +249,11 @@
     "subtitle": "Управление подпиской, потреблением и способами оплаты.",
     "getServer": "Получить сервер"
   },
+  "products": {
+    "label": "Варианты оплаты",
+    "cloudDescription": "Хостинг и вычисления",
+    "manageDescription": "Собственные серверы"
+  },
   "sidebar": {
     "planSuffix": "Тариф {name}",
     "status": "Статус",

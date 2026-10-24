@@ -249,6 +249,11 @@
     "subtitle": "サブスクリプション、使用量、支払い方法を管理します。",
     "getServer": "サーバーを購入"
   },
+  "products": {
+    "label": "お支払いの種類",
+    "cloudDescription": "ホスティングとコンピュート",
+    "manageDescription": "お持ちのサーバー"
+  },
   "sidebar": {
     "planSuffix": "{name}プラン",
     "status": "ステータス",

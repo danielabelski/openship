@@ -51,7 +51,7 @@ const page = (overrides: Partial<BillingView> = {}) => (
     <p>Billing content</p>
   </BillingContent></BillingPageView>
 );
-const tabs = () => [...host.querySelectorAll("nav a")];
+const tabs = () => [...host.querySelectorAll(`nav[aria-label="${baseDictionary.billing.layout.title}"] a`)];
 const purchaseTabs = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
 const picker = () => host.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]');
 const serverButton = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('aside button[aria-pressed]')].find(button => button.textContent?.includes(name))!;

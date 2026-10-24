@@ -249,6 +249,11 @@
     "subtitle": "Gérez votre abonnement, votre utilisation et vos moyens de paiement.",
     "getServer": "Obtenir un serveur"
   },
+  "products": {
+    "label": "Options de facturation",
+    "cloudDescription": "Hébergement et calcul",
+    "manageDescription": "Vos propres serveurs"
+  },
   "sidebar": {
     "planSuffix": "Forfait {name}",
     "status": "Statut",

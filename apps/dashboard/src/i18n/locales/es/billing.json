@@ -249,6 +249,11 @@
     "subtitle": "Gestiona tu suscripción, uso y métodos de pago.",
     "getServer": "Obtener servidor"
   },
+  "products": {
+    "label": "Opciones de facturación",
+    "cloudDescription": "Alojamiento y cómputo",
+    "manageDescription": "Tus propios servidores"
+  },
   "sidebar": {
     "planSuffix": "Plan {name}",
     "status": "Estado",

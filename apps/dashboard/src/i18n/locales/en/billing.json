@@ -249,6 +249,11 @@
     "subtitle": "Manage your subscription, usage, and payment methods.",
     "getServer": "Add resources"
   },
+  "products": {
+    "label": "Billing options",
+    "cloudDescription": "Hosting & compute",
+    "manageDescription": "Your own servers"
+  },
   "sidebar": {
     "planSuffix": "{name} Plan",
     "status": "Status",
