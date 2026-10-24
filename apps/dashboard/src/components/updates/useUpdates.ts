@@ -131,10 +131,10 @@ let remoteCache: {
   checkedAt: number;
   pending: boolean;
 } | null = null;
-function fetchRemote(scope: string, force = false): Promise<AdvisoryFeedResult | null> {
+function fetchRemote(scope: string): Promise<AdvisoryFeedResult | null> {
   if (
     remoteCache?.scope === scope &&
-    (remoteCache.pending || (!force && Date.now() - remoteCache.checkedAt < 5 * 60_000))
+    (remoteCache.pending || Date.now() - remoteCache.checkedAt < 5 * 60_000)
   )
     return remoteCache.promise;
   const previous = remoteCache?.scope === scope ? remoteCache.promise : null;
@@ -166,6 +166,22 @@ function fetchRemote(scope: string, force = false): Promise<AdvisoryFeedResult |
   const entry = { scope, checkedAt: 0, pending: true, promise };
   remoteCache = entry;
   return promise;
+}
+
+const refreshListeners = new Set<(resourceKey: string) => void>();
+const queuedRefreshes = new Set<string>();
+function refreshConsumers(resourceKey: string) {
+  if (queuedRefreshes.has(resourceKey)) return;
+  queuedRefreshes.add(resourceKey);
+  queueMicrotask(() => {
+    queuedRefreshes.delete(resourceKey);
+    const scope = `${resourceKey}:${getApiRequestScopeVersion()}`;
+    // Consent/check mutations must supersede reads started before the mutation.
+    // Keep the old snapshot only as an offline warning fallback.
+    if (remoteCache?.scope === scope)
+      remoteCache = { ...remoteCache, pending: false, checkedAt: 0 };
+    for (const listener of refreshListeners) listener(resourceKey);
+  });
 }
 
 const EMPTY_OVERVIEW: SecurityOverview = { projects: [], pendingProjects: 0, unknownProjects: 0 };
@@ -290,7 +306,7 @@ export function useUpdates(): UseUpdates {
       : "cloud";
 
   const load = useCallback(
-    async (force = false) => {
+    async () => {
       if (!deployInfo && !isDesktop()) return;
       const request = ++generation.current;
       const requestScope = getApiRequestScopeVersion();
@@ -309,7 +325,7 @@ export function useUpdates(): UseUpdates {
       if (!current || !isCurrent()) return;
       const [prefs, remote, notices] = await Promise.all([
         getPrefs(),
-        fetchRemote(requestKey, force),
+        fetchRemote(requestKey),
         fetchNotices(),
       ]);
       if (!isCurrent()) return;
@@ -377,15 +393,20 @@ export function useUpdates(): UseUpdates {
   );
 
   useEffect(() => {
+    const onRefresh = (key: string) => {
+      if (key === resourceKey) void load();
+    };
+    refreshListeners.add(onRefresh);
     void load();
     const timer = setInterval(() => {
       if (document.visibilityState !== "hidden") void load();
     }, 5 * 60_000);
     return () => {
+      refreshListeners.delete(onRefresh);
       generation.current++;
       clearInterval(timer);
     };
-  }, [load]);
+  }, [load, resourceKey]);
 
   const dismissAdvisory = useCallback(
     (id: string) => {
@@ -472,8 +493,8 @@ export function useUpdates(): UseUpdates {
   // Concurrent consumers join the backend read. The native installer separately
   // verifies the matching release artifact before installing it.
   const refresh = useCallback(() => {
-    void load(true);
-  }, [load]);
+    refreshConsumers(resourceKey);
+  }, [resourceKey]);
 
   return {
     state: state

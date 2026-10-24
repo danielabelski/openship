@@ -282,6 +282,45 @@ const affectedOverview = {
   unknownProjects: 0,
 };
 describe("global runtime advisories", () => {
+  it("refreshes the banner and settings together after consent changes", async () => {
+    feed.overview = {
+      ...affectedOverview,
+      projects: affectedOverview.projects.map((p) => ({ ...p, autoRefresh: true })),
+    };
+    await mount();
+    feed.overview = {
+      ...affectedOverview,
+      projects: affectedOverview.projects.map((p) => ({ ...p, autoRefresh: false, findings: [] })),
+    };
+    await act(async () => state[1].refresh());
+    for (const consumer of state) {
+      expect(consumer.securityOverview.projects[0].autoRefresh).toBe(false);
+      expect(consumer.state?.advisories).toEqual([]);
+    }
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+  it("does not reuse a read started before a consent mutation or let it overwrite the new result", async () => {
+    delete window.desktop;
+    feed.overview = {
+      ...affectedOverview,
+      projects: affectedOverview.projects.map((p) => ({ ...p, autoRefresh: true })),
+    };
+    await mount();
+    let finish!: (value: unknown) => void;
+    check.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await act(async () => state[0].refresh());
+    feed.overview = {
+      ...affectedOverview,
+      projects: affectedOverview.projects.map((p) => ({ ...p, autoRefresh: false })),
+    };
+    await act(async () => state[1].refresh());
+    for (const consumer of state)
+      expect(consumer.securityOverview.projects[0].autoRefresh).toBe(false);
+    await act(async () => finish(snapshot));
+    for (const consumer of state)
+      expect(consumer.securityOverview.projects[0].autoRefresh).toBe(false);
+    expect(check).toHaveBeenCalledTimes(3);
+  });
   it.each(["desktop", "selfhosted", "cloud"])(
     "shows workload findings through the root feed in %s",
     async (mode) => {
