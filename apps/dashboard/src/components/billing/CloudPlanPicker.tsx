@@ -1,5 +1,6 @@
 "use client";
 
+import { ReferralCode, useReferralCode } from "@/components/affiliates/ReferralCode";
 import { Button } from "@/components/ui/button";
 import { BillingPlansSkeleton } from "@/app/(dashboard)/billing/_components/BillingTabSkeleton";
 import { BillingPlanSummary } from "@/app/(dashboard)/billing/_components/billing-shared";
@@ -59,7 +60,9 @@ function PlanPicker({
   autoCheckout = false,
   checkoutKey,
   onCheckoutSettled,
+  initialReferralCode,
 }: {
+  initialReferralCode?: string;
   requestedPlanId?: string;
   requestedInterval?: "monthly" | "annual";
   autoCheckout?: boolean;
@@ -84,6 +87,7 @@ function PlanPicker({
   purchaseDisabled?: boolean;
 }) {
   const { t } = useI18n();
+  const referral = useReferralCode(initialReferralCode);
   const purchase = useCloudPurchase();
   const billingWorkspaceId = useBillingWorkspace();
   const selectedWorkspaceId = workspaceId ?? billingWorkspaceId;
@@ -197,7 +201,8 @@ function PlanPicker({
     dismissUnavailable,
     recovery,
   } = useCloudCheckout({
-    enabled: canPurchase && !purchaseDisabled && !payg && !managing,
+    enabled: canPurchase && !purchaseDisabled && !payg && !managing && referral.ready,
+    affiliateCode: referral.verified,
     preserveProject,
     onCheckoutStarted,
     workspaceId,
@@ -212,7 +217,7 @@ function PlanPicker({
     // The website click selected this preset. Wait for authenticated scope and
     // live availability, and schedule after effect replay so Strict Mode cannot
     // cancel the only attempt during its initial mount cleanup.
-    if (autoCheckout && requestedPlan && requestedIntervalAvailable && !loading && !error && canPurchase && !purchaseDisabled && !payg && !managing && !preserveProject && configuration === "plans") {
+    if (autoCheckout && requestedPlan && requestedIntervalAvailable && !loading && !error && canPurchase && !purchaseDisabled && !payg && !managing && !preserveProject && referral.ready && configuration === "plans") {
       void Promise.resolve().then(() => {
         if (disposed || autoStarted.current) return;
         autoStarted.current = true;
@@ -220,7 +225,7 @@ function PlanPicker({
       });
     }
     return () => { disposed = true; };
-  }, [autoCheckout, requestedPlan?.id, requestedIntervalAvailable, loading, error, canPurchase, purchaseDisabled, payg, managing, preserveProject, configuration, startCheckout, interval]);
+  }, [autoCheckout, requestedPlan?.id, requestedIntervalAvailable, loading, error, canPurchase, purchaseDisabled, payg, managing, preserveProject, referral.ready, configuration, startCheckout, interval]);
   const selectedCurrentPlan =
     hasPlan && subscription?.configuration !== "custom" ? choices.current : null;
   const busy = subscribing !== null || changes.busy;
@@ -389,6 +394,7 @@ function PlanPicker({
           className={`min-w-0 space-y-5 ${summaryAside ? "@min-[64rem]/plans:col-start-1 @min-[64rem]/plans:row-start-1" : ""}`}
         >
           {canChooseMode && purchase.tabs === "inline" && !purchase.management && <CloudPurchaseTabs />}
+          {canPurchase && !payg && !managing && <ReferralCode referral={referral} disabled={busy} />}
           {canChooseMode ? (
             <CloudPurchaseHeaderContent details={details} controls={controls} />
           ) : (
@@ -435,7 +441,7 @@ function PlanPicker({
                 currentOffer={currentOffer}
                 subscription={subscription}
                 allocatedDiskGb={allocatedDiskGb}
-                disabled={!selectable || purchaseDisabled || payg || managing}
+                disabled={!selectable || purchaseDisabled || payg || managing || (canPurchase && !referral.ready)}
                 busy={busy}
                 actionLabel={canModify ? t.billing.planChange.review : undefined}
                 quoteRevision={quoteRevision}
@@ -453,7 +459,7 @@ function PlanPicker({
                 currentPlan={selectedCurrentPlan}
                 onSelectPlan={handleSelectPlan}
                 subscribingPlan={subscribing}
-                purchasesDisabled={!selectable || changes.busy || purchaseDisabled || payg || managing}
+                purchasesDisabled={!selectable || changes.busy || purchaseDisabled || payg || managing || (canPurchase && !referral.ready)}
                 selectionLabel={canModify ? t.billing.planChange.review : undefined}
                 interval={interval}
                 workspaceScoped={workspaceScoped}

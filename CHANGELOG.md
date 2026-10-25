@@ -6,6 +6,14 @@ Runtime security notices use the signed feed published from `security-advisories
 
 ## Unreleased
 
+- **Cloud affiliate program** — create and revoke referral links with optional
+  customer discounts, follow verified payments, renewals and expiry, and request
+  reviewed cash payouts. Oblien owns the ledger and atomically reserves payout
+  funds. The default minimum is $50, with trusted per-user overrides. Eligible
+  monthly and annual Cloud compute starts at $10 per month equivalent; Manage,
+  PAYG and top-ups are excluded. The program remains off until the provider and
+  its explicit policy grant are configured.
+
 - **Recover storage from slow build-cache scans** — when free disk space or inodes
   already block deployment, allow up to two minutes to measure unused, owned build
   caches before reclaiming them. Healthy hosts retain the short best-effort scan;

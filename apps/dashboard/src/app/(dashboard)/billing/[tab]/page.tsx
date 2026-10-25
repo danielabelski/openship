@@ -60,6 +60,7 @@ export default async function BillingTabPage({
   if (newServer) return <BillingPageView view={{ ...view, plansOnly: true }}>
     <BillingWorkspaceProvider>
       <BillingContent layout="purchase" sidebar={null}><ManagedServerPurchase
+        initialReferralCode={typeof query.ref === "string" ? query.ref : undefined}
         requestedPlanId={requestedPlanId}
         requestedInterval={requestedInterval}
         autoCheckout={autoCheckout}
@@ -101,6 +102,7 @@ export default async function BillingTabPage({
       case "plans":
         return (
           <BillingPlansRoute
+            initialReferralCode={typeof query.ref === "string" ? query.ref : undefined}
             billingState={plansOnly ? undefined : state}
             currentPlan={state.tier as PlanTierId}
             currentOffer={state.plan}

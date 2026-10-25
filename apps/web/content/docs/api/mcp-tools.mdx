@@ -689,6 +689,16 @@ Every remaining route has an explicit boundary: browser authorization, streaming
 | `POST /api/actions/runtime/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry` | Authenticates an expiring, purpose-bound Actions job capability and rechecks the saved actor and organization; user sessions and provider keys are not accepted. |
 | `POST /api/actions/runtime/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload` | Authenticates an expiring, purpose-bound Actions job capability and rechecks the saved actor and organization; user sessions and provider keys are not accepted. |
 | `POST /api/actions/runtime/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL` | Authenticates an expiring, purpose-bound Actions job capability and rechecks the saved actor and organization; user sessions and provider keys are not accepted. |
+| `GET /api/affiliates` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `POST /api/affiliates/enroll` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `GET /api/affiliates/offers` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `POST /api/affiliates/offers` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `POST /api/affiliates/offers/revoke` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `GET /api/affiliates/payouts` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `POST /api/affiliates/payouts` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `POST /api/affiliates/payouts/cancel` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `GET /api/affiliates/referrals` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `GET /api/affiliates/referrals/payments` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
 | `GET /api/analytics/usage/stream` | SSE transport for live progress. Use the resource’s JSON status/log tools over MCP, or an authenticated HTTP client for streaming. |
 | `GET /api/auth/*` | Authentication, credential issuance or MCP transport. These modules cannot become tools. |
 | `POST /api/auth/*` | Authentication, credential issuance or MCP transport. These modules cannot become tools. |
@@ -861,6 +871,7 @@ Every remaining route has an explicit boundary: browser authorization, streaming
 | `GET /api/projects/:id/services/:serviceId/logs/stream` | SSE transport for live progress. Use the resource’s JSON status/log tools over MCP, or an authenticated HTTP client for streaming. |
 | `POST /api/projects/folder/scan/:sessionId/env-reveal` | Explicit dashboard secret reveal. MCP passes uploadSessionId to project ensure so real values stay server-side. |
 | `POST /api/projects/folder/upload/:sessionId` | Binary tarball upload; use the authenticated upload URL from folder/session outside JSON-RPC. |
+| `GET /api/referrals/:code` | Public commercial referral terms for signup and checkout; contains no account or earnings data. |
 | `POST /api/services/terminal/ticket` | Single-use browser WebSocket terminal ticket. Use the service exec tool for bounded commands over MCP. |
 | `GET /api/services/terminal/ws/:serviceId` | WebSocket upgrade — auth happens inside upgradeWebSocket via ticket subprotocol or session-cookie fallback (HTTP middleware blocks the handshake) |
 | `PUT /api/settings` | Compatibility settings update; use the dedicated build-mode tool for this preference. |
